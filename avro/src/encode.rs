@@ -309,6 +309,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
             if let Schema::Record(RecordSchema {
                 ref name,
                 fields: ref schema_fields,
+                ref lookup,
                 ..
             }) = *schema
             {
@@ -339,21 +340,26 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                         )?;
                     }
                 } else {
-                    // Fallback: use the schema's pre-built lookup table to find fields
-                    // by name. This avoids allocating a new HashMap on every encode call.
-                    for schema_field in schema_fields.iter() {
-                        let field_name = &schema_field.name;
-                        // Use the schema's lookup table to check if the value has a field
-                        // at the expected position, or search by name/alias
-                        let value_opt = value_fields
-                            .iter()
-                            .find(|(vname, _)| {
-                                vname == field_name
-                                    || schema_field.aliases.iter().any(|alias| vname == alias)
-                            })
-                            .map(|(_, v)| v);
+                    // Fallback: fields are not aligned with schema order.
+                    // Build a lightweight index from value field names to their
+                    // positions in the value vec, then iterate schema fields in
+                    // order and look up each value by name using the schema's
+                    // pre-built lookup table (BTreeMap). This avoids allocating
+                    // a HashMap of (&str -> &Value) on every encode call.
+                    //
+                    // We build a small Vec<Option<&Value>> indexed by schema position.
+                    let mut ordered_values: Vec<Option<&Value>> =
+                        vec![None; schema_fields.len()];
+                    for (vname, vval) in value_fields.iter() {
+                        if let Some(&idx) = lookup.get(vname.as_str()) {
+                            ordered_values[idx] = Some(vval);
+                        }
+                        // If not found by primary name, check aliases
+                        // (aliases are rare so we only scan on miss)
+                    }
 
-                        if let Some(value) = value_opt {
+                    for (idx, schema_field) in schema_fields.iter().enumerate() {
+                        if let Some(value) = ordered_values[idx] {
                             written_bytes += encode_internal(
                                 value,
                                 &schema_field.schema,
@@ -362,11 +368,34 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                                 writer,
                             )?;
                         } else {
-                            return Err(Details::NoEntryInLookupTable(
-                                field_name.clone(),
-                                format!("{:?}", value_fields.iter().map(|(n, _)| n).collect::<Vec<_>>()),
-                            )
-                            .into());
+                            // Try alias-based lookup as a last resort
+                            let alias_value = value_fields
+                                .iter()
+                                .find(|(vname, _)| {
+                                    schema_field.aliases.iter().any(|alias| vname == alias)
+                                })
+                                .map(|(_, v)| v);
+                            if let Some(value) = alias_value {
+                                written_bytes += encode_internal(
+                                    value,
+                                    &schema_field.schema,
+                                    names,
+                                    record_namespace,
+                                    writer,
+                                )?;
+                            } else {
+                                return Err(Details::NoEntryInLookupTable(
+                                    schema_field.name.clone(),
+                                    format!(
+                                        "{:?}",
+                                        value_fields
+                                            .iter()
+                                            .map(|(n, _)| n)
+                                            .collect::<Vec<_>>()
+                                    ),
+                                )
+                                .into());
+                            }
                         }
                     }
                 }
