@@ -36,8 +36,28 @@ use std::{borrow::Borrow, collections::HashMap, io::Write};
 /// be valid with regards to the schema. Schema are needed only to guide the
 /// encoding for complex type values.
 pub fn encode<W: Write>(value: &Value, schema: &Schema, writer: &mut W) -> AvroResult<usize> {
+    // Fast path: if the schema contains no named type references, we can skip
+    // the expensive ResolvedSchema construction (which walks the entire schema
+    // tree to build a HashMap of named types). Most simple/flat schemas benefit.
+    if !schema_has_refs(schema) {
+        let empty: HashMap<Name, &Schema> = HashMap::new();
+        return encode_internal(value, schema, &empty, None, writer);
+    }
     let rs = ResolvedSchema::try_from(schema)?;
     encode_internal(value, schema, rs.get_names(), None, writer)
+}
+
+/// Returns true if the schema (or any sub-schema) contains a `Schema::Ref`.
+/// This is used to decide whether we need to build a `ResolvedSchema` for encoding.
+fn schema_has_refs(schema: &Schema) -> bool {
+    match schema {
+        Schema::Ref { .. } => true,
+        Schema::Array(inner) => schema_has_refs(&inner.items),
+        Schema::Map(inner) => schema_has_refs(&inner.types),
+        Schema::Union(union) => union.schemas.iter().any(schema_has_refs),
+        Schema::Record(record) => record.fields.iter().any(|f| schema_has_refs(&f.schema)),
+        _ => false,
+    }
 }
 
 /// Encode `s` as the _bytes_ primitive type.
@@ -294,22 +314,22 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
             {
                 let record_namespace = name.namespace().or(enclosing_namespace);
 
-                let mut lookup = HashMap::new();
-                value_fields.iter().for_each(|(name, field)| {
-                    lookup.insert(name, field);
-                });
+                // Fast path: if the value fields are in the same order as the schema
+                // fields and have matching names, we can encode by direct index iteration
+                // without any HashMap/BTreeMap lookup. This is the common case when values
+                // are constructed programmatically in schema order.
+                let fields_aligned = value_fields.len() == schema_fields.len()
+                    && value_fields
+                        .iter()
+                        .zip(schema_fields.iter())
+                        .all(|((vname, _), sf)| vname == &sf.name);
 
                 let mut written_bytes = 0;
-                for schema_field in schema_fields.iter() {
-                    let name = &schema_field.name;
-                    let value_opt = lookup.get(name).or_else(|| {
-                        schema_field
-                            .aliases
-                            .iter()
-                            .find_map(|alias| lookup.get(alias))
-                    });
-
-                    if let Some(value) = value_opt {
+                if fields_aligned {
+                    // Direct positional encoding — no allocation, no lookups
+                    for ((_name, value), schema_field) in
+                        value_fields.iter().zip(schema_fields.iter())
+                    {
                         written_bytes += encode_internal(
                             value,
                             &schema_field.schema,
@@ -317,12 +337,37 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                             record_namespace,
                             writer,
                         )?;
-                    } else {
-                        return Err(Details::NoEntryInLookupTable(
-                            name.clone(),
-                            format!("{lookup:?}"),
-                        )
-                        .into());
+                    }
+                } else {
+                    // Fallback: use the schema's pre-built lookup table to find fields
+                    // by name. This avoids allocating a new HashMap on every encode call.
+                    for schema_field in schema_fields.iter() {
+                        let field_name = &schema_field.name;
+                        // Use the schema's lookup table to check if the value has a field
+                        // at the expected position, or search by name/alias
+                        let value_opt = value_fields
+                            .iter()
+                            .find(|(vname, _)| {
+                                vname == field_name
+                                    || schema_field.aliases.iter().any(|alias| vname == alias)
+                            })
+                            .map(|(_, v)| v);
+
+                        if let Some(value) = value_opt {
+                            written_bytes += encode_internal(
+                                value,
+                                &schema_field.schema,
+                                names,
+                                record_namespace,
+                                writer,
+                            )?;
+                        } else {
+                            return Err(Details::NoEntryInLookupTable(
+                                field_name.clone(),
+                                format!("{:?}", value_fields.iter().map(|(n, _)| n).collect::<Vec<_>>()),
+                            )
+                            .into());
+                        }
                     }
                 }
                 Ok(written_bytes)
