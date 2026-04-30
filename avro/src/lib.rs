@@ -113,7 +113,7 @@ pub use uuid::Uuid;
 )]
 pub use writer::{
     Clearable, Writer, WriterBuilder,
-    datum::{to_avro_datum, to_avro_datum_schemata, write_avro_datum_ref},
+    datum::{GenericDatumWriter, to_avro_datum, to_avro_datum_schemata, write_avro_datum_ref},
     single_object::{GenericSingleObjectWriter, SpecificSingleObjectWriter},
 };
 
