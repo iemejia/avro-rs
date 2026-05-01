@@ -78,8 +78,11 @@ pub(crate) fn read_long<R: Read>(reader: &mut R) -> AvroResult<i64> {
 }
 
 /// Write the number as a zigzagged varint to the writer.
-pub(crate) fn zig_i32<W: Write>(n: i32, buffer: W) -> AvroResult<usize> {
-    zig_i64(n as i64, buffer)
+pub(crate) fn zig_i32<W: Write>(n: i32, writer: W) -> AvroResult<usize> {
+    // Dedicated 32-bit path avoids widening to i64 and uses a smaller
+    // stack buffer (5 bytes max vs 10 for i64).
+    let z = ((n << 1) ^ (n >> 31)) as u32;
+    encode_variable_u32(z, writer)
 }
 
 /// Write the number as a zigzagged varint to the writer.
@@ -104,24 +107,46 @@ pub(crate) fn zag_i64<R: Read>(reader: &mut R) -> AvroResult<i64> {
     })
 }
 
-/// Write the number as a varint to the writer.
+/// Write the number as a varint to the writer (32-bit variant).
 ///
-/// Note: this function does not do zigzag encoding, for that see [`zig_i32`] and [`zig_i64`].
-fn encode_variable<W: Write>(mut zigzagged: u64, mut writer: W) -> AvroResult<usize> {
-    // Ensure the number is little endian for the varint encoding (no-op on LE systems)
-    zigzagged = zigzagged.to_le();
-    // Encode the number as a varint
-    let mut buffer = [0u8; 10];
+/// Uses a 5-byte stack buffer (max varint size for 32-bit values).
+fn encode_variable_u32<W: Write>(mut z: u32, mut writer: W) -> AvroResult<usize> {
+    let mut buffer = [0u8; 5];
     let mut i: usize = 0;
     loop {
-        if zigzagged <= 0x7F {
-            buffer[i] = (zigzagged & 0x7F) as u8;
+        if z <= 0x7F {
+            buffer[i] = (z & 0x7F) as u8;
             i += 1;
             break;
         } else {
-            buffer[i] = (0x80 | (zigzagged & 0x7F)) as u8;
+            buffer[i] = (0x80 | (z & 0x7F)) as u8;
             i += 1;
-            zigzagged >>= 7;
+            z >>= 7;
+        }
+    }
+    writer
+        .write_all(&buffer[..i])
+        .map_err(Details::WriteBytes)?;
+    Ok(i)
+}
+
+/// Write the number as a varint to the writer.
+///
+/// Note: this function does not do zigzag encoding, for that see [`zig_i32`] and [`zig_i64`].
+fn encode_variable<W: Write>(mut z: u64, mut writer: W) -> AvroResult<usize> {
+    // Varint encoding extracts 7 bits at a time via arithmetic shifts,
+    // which is byte-order independent — no endianness conversion needed.
+    let mut buffer = [0u8; 10];
+    let mut i: usize = 0;
+    loop {
+        if z <= 0x7F {
+            buffer[i] = (z & 0x7F) as u8;
+            i += 1;
+            break;
+        } else {
+            buffer[i] = (0x80 | (z & 0x7F)) as u8;
+            i += 1;
+            z >>= 7;
         }
     }
     writer

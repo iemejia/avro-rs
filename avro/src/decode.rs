@@ -70,6 +70,11 @@ fn decode_seq_len<R: Read>(reader: &mut R) -> AvroResult<usize> {
 
 /// Decode a `Value` from avro format given its `Schema`.
 pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> AvroResult<Value> {
+    // Fast path: skip ResolvedSchema construction for schemas without refs
+    if !crate::encode::schema_has_refs(schema) {
+        let empty: HashMap<Name, &Schema> = HashMap::new();
+        return decode_internal(schema, &empty, None, reader);
+    }
     let rs = ResolvedSchema::try_from(schema)?;
     decode_internal(schema, rs.get_names(), None, reader)
 }
@@ -101,68 +106,57 @@ pub(crate) fn decode_internal<R: Read, S: Borrow<Schema>>(
         }
         Schema::Decimal(DecimalSchema { inner, .. }) => match inner {
             InnerDecimalSchema::Fixed(fixed) => {
-                match decode_internal(
-                    &Schema::Fixed(fixed.copy_only_size()),
-                    names,
-                    enclosing_namespace,
-                    reader,
-                )? {
-                    Value::Fixed(_, bytes) => Ok(Value::Decimal(Decimal::from(bytes))),
-                    value => Err(Details::FixedValue(value).into()),
-                }
+                // Read fixed-size bytes directly instead of constructing an
+                // intermediate Value::Fixed and a temporary Schema::Fixed.
+                let size = fixed.size;
+                let mut buf = vec![0u8; size];
+                reader
+                    .read_exact(&mut buf)
+                    .map_err(|e| Details::ReadFixed(e, size))?;
+                Ok(Value::Decimal(Decimal::from(buf)))
             }
             InnerDecimalSchema::Bytes => {
-                match decode_internal(&Schema::Bytes, names, enclosing_namespace, reader)? {
-                    Value::Bytes(bytes) => Ok(Value::Decimal(Decimal::from(bytes))),
-                    value => Err(Details::BytesValue(value).into()),
-                }
+                // Read bytes directly instead of going through Value::Bytes.
+                let len = decode_len(reader)?;
+                let mut buf = vec![0u8; len];
+                reader.read_exact(&mut buf).map_err(Details::ReadBytes)?;
+                Ok(Value::Decimal(Decimal::from(buf)))
             }
         },
         Schema::BigDecimal => {
-            match decode_internal(&Schema::Bytes, names, enclosing_namespace, reader)? {
-                Value::Bytes(bytes) => deserialize_big_decimal(&bytes).map(Value::BigDecimal),
-                value => Err(Details::BytesValue(value).into()),
-            }
+            let len = decode_len(reader)?;
+            let mut buf = vec![0u8; len];
+            reader.read_exact(&mut buf).map_err(Details::ReadBytes)?;
+            deserialize_big_decimal(&buf).map(Value::BigDecimal)
         }
         Schema::Uuid(UuidSchema::String) => {
-            let Value::String(string) =
-                decode_internal(&Schema::String, names, enclosing_namespace, reader)?
-            else {
-                // decoding a String can also return a Null, indicating EOF
-                return Err(Error::new(Details::ReadBytes(std::io::Error::from(
-                    ErrorKind::UnexpectedEof,
-                ))));
-            };
-            let uuid = Uuid::parse_str(&string).map_err(Details::ConvertStrToUuid)?;
+            // Read the string bytes directly and parse UUID from them,
+            // avoiding the intermediate Value::String construction.
+            let len = decode_len(reader)?;
+            let mut buf = vec![0u8; len];
+            reader.read_exact(&mut buf).map_err(Details::ReadBytes)?;
+            let s = String::from_utf8(buf)
+                .map_err(|e| Details::ConvertToUtf8Error(e.utf8_error()))?;
+            let uuid = Uuid::parse_str(&s).map_err(Details::ConvertStrToUuid)?;
             Ok(Value::Uuid(uuid))
         }
         Schema::Uuid(UuidSchema::Bytes) => {
-            let Value::Bytes(bytes) =
-                decode_internal(&Schema::Bytes, names, enclosing_namespace, reader)?
-            else {
-                unreachable!(
-                    "decode_internal(Schema::Bytes) can only return a Value::Bytes or an error"
-                )
-            };
-            let uuid = Uuid::from_slice(&bytes).map_err(Details::ConvertSliceToUuid)?;
+            let len = decode_len(reader)?;
+            let mut buf = vec![0u8; len];
+            reader.read_exact(&mut buf).map_err(Details::ReadBytes)?;
+            let uuid = Uuid::from_slice(&buf).map_err(Details::ConvertSliceToUuid)?;
             Ok(Value::Uuid(uuid))
         }
         Schema::Uuid(UuidSchema::Fixed(fixed)) => {
-            let Value::Fixed(n, bytes) = decode_internal(
-                &Schema::Fixed(fixed.copy_only_size()),
-                names,
-                enclosing_namespace,
-                reader,
-            )?
-            else {
-                unreachable!(
-                    "decode_internal(Schema::Fixed) can only return a Value::Fixed or an error"
-                )
-            };
-            if n != 16 {
-                return Err(Details::ConvertFixedToUuid(n).into());
+            let size = fixed.size;
+            let mut buf = vec![0u8; size];
+            reader
+                .read_exact(&mut buf)
+                .map_err(|e| Details::ReadFixed(e, size))?;
+            if size != 16 {
+                return Err(Details::ConvertFixedToUuid(size).into());
             }
-            let uuid = Uuid::from_slice(&bytes).map_err(Details::ConvertSliceToUuid)?;
+            let uuid = Uuid::from_slice(&buf).map_err(Details::ConvertSliceToUuid)?;
             Ok(Value::Uuid(uuid))
         }
         Schema::Int => decode_int(reader),

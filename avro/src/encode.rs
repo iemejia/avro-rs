@@ -48,8 +48,8 @@ pub fn encode<W: Write>(value: &Value, schema: &Schema, writer: &mut W) -> AvroR
 }
 
 /// Returns true if the schema (or any sub-schema) contains a `Schema::Ref`.
-/// This is used to decide whether we need to build a `ResolvedSchema` for encoding.
-fn schema_has_refs(schema: &Schema) -> bool {
+/// This is used to decide whether we need to build a `ResolvedSchema` for encoding/decoding.
+pub(crate) fn schema_has_refs(schema: &Schema) -> bool {
     match schema {
         Schema::Ref { .. } => true,
         Schema::Array(inner) => schema_has_refs(&inner.items),
@@ -102,7 +102,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
     match value {
         Value::Null => {
             if let Schema::Union(union) = schema {
-                match union.schemas.iter().position(|sch| *sch == Schema::Null) {
+                match union.index_of_schema_kind(SchemaKind::Null) {
                     None => Err(Details::EncodeValueAsSchemaError {
                         value_kind: ValueKind::Null,
                         supported_schema: vec![SchemaKind::Null, SchemaKind::Union],
@@ -143,14 +143,15 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                             Details::EncodeDecimalAsFixedError(num_bytes, fixed.size).into()
                         );
                     }
-                    encode(
-                        &Value::Fixed(fixed.size, bytes),
-                        &Schema::Fixed(fixed.copy_only_size()),
-                        writer,
-                    )
+                    // Write fixed bytes directly — no need to construct temporary
+                    // Value/Schema and re-enter encode() which would re-walk the schema.
+                    writer
+                        .write(&bytes)
+                        .map_err(|e| Details::WriteBytes(e).into())
                 }
                 InnerDecimalSchema::Bytes => {
-                    encode(&Value::Bytes(decimal.try_into()?), &Schema::Bytes, writer)
+                    let bytes: Vec<u8> = decimal.try_into()?;
+                    encode_bytes(&bytes, writer)
                 }
             },
             _ => Err(Details::EncodeValueAsSchemaError {
@@ -166,12 +167,13 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                 .map_err(|e| Details::WriteBytes(e).into())
         }
         Value::Uuid(uuid) => match *schema {
-            Schema::Uuid(UuidSchema::String) | Schema::String => encode_bytes(
-                // we need the call .to_string() to properly convert ASCII to UTF-8
-                #[allow(clippy::unnecessary_to_owned)]
-                &uuid.to_string(),
-                writer,
-            ),
+            Schema::Uuid(UuidSchema::String) | Schema::String => {
+                // Use a stack-allocated buffer instead of uuid.to_string() which
+                // allocates a String on the heap.
+                let mut buf = [0u8; uuid::fmt::Hyphenated::LENGTH];
+                let s = uuid.as_hyphenated().encode_lower(&mut buf);
+                encode_bytes(s.as_bytes(), writer)
+            }
             Schema::Uuid(UuidSchema::Bytes) | Schema::Bytes => {
                 let bytes = uuid.as_bytes();
                 encode_bytes(bytes, writer)
