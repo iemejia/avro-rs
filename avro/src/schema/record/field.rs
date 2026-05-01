@@ -27,13 +27,18 @@ use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 /// Represents a `field` in a `record` Avro schema.
 #[derive(bon::Builder, Clone, PartialEq)]
 pub struct RecordField {
     /// Name of the field.
+    ///
+    /// Stored as `Arc<str>` to enable zero-cost cloning during decoding —
+    /// decoded `Value::Record` entries share the field name reference with
+    /// the schema instead of allocating a new String per field per decode.
     #[builder(into)]
-    pub name: String,
+    pub name: Arc<str>,
     /// Documentation of the field.
     #[builder(default)]
     pub doc: Documentation,
@@ -210,7 +215,7 @@ impl Serialize for RecordField {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("name", &self.name)?;
+        map.serialize_entry("name", self.name.as_ref())?;
         map.serialize_entry("type", &self.schema)?;
 
         if let Some(default) = &self.default {
@@ -270,13 +275,13 @@ mod tests {
             .name("str_slice")
             .schema(Schema::Boolean)
             .build();
-        assert_eq!(field.name, "str_slice");
+        assert_eq!(&*field.name, "str_slice");
 
         let field = RecordField::builder()
             .name("String".to_string())
             .schema(Schema::Boolean)
             .build();
-        assert_eq!(field.name, "String");
+        assert_eq!(&*field.name, "String");
 
         Ok(())
     }

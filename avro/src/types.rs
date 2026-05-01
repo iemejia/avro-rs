@@ -37,6 +37,7 @@ use std::{
     fmt::Debug,
     hash::BuildHasher,
     str::FromStr,
+    sync::Arc,
 };
 use uuid::Uuid;
 
@@ -78,7 +79,10 @@ pub enum Value {
     /// of its corresponding schema.
     /// This allows schema-less encoding, as well as schema resolution while
     /// reading values.
-    Enum(u32, String),
+    ///
+    /// The symbol is stored as `Arc<str>` to enable zero-copy sharing with the
+    /// schema during decoding, avoiding per-value heap allocations.
+    Enum(u32, Arc<str>),
     /// An `union` Avro value.
     ///
     /// A Union is represented by the value it holds and its position in the type list
@@ -92,11 +96,14 @@ pub enum Value {
     Map(HashMap<String, Value>),
     /// A `record` Avro value.
     ///
-    /// A Record is represented by a vector of (`<record name>`, `value`).
+    /// A Record is represented by a vector of (`<field name>`, `value`).
     /// This allows schema-less encoding.
     ///
+    /// Field names are stored as `Arc<str>` to enable zero-copy sharing with
+    /// the schema during decoding, avoiding per-field heap allocations.
+    ///
     /// See [Record](types.Record) for a more user-friendly support.
-    Record(Vec<(String, Value)>),
+    Record(Vec<(Arc<str>, Value)>),
     /// A date value.
     ///
     /// Serialized and deserialized as `i32` directly. Can only be deserialized properly with a
@@ -213,8 +220,8 @@ pub struct Record<'a> {
     /// List of fields contained in the record.
     /// Ordered according to the fields in the schema given to create this
     /// `Record` object. Any unset field defaults to `Value::Null`.
-    pub fields: Vec<(String, Value)>,
-    schema_lookup: &'a BTreeMap<String, usize>,
+    pub fields: Vec<(Arc<str>, Value)>,
+    schema_lookup: &'a BTreeMap<Arc<str>, usize>,
 }
 
 impl Record<'_> {
@@ -327,7 +334,7 @@ impl TryFrom<Value> for JsonValue {
             Value::Fixed(_size, items) => {
                 Ok(Self::Array(items.into_iter().map(|v| v.into()).collect()))
             }
-            Value::Enum(_i, s) => Ok(Self::String(s)),
+            Value::Enum(_i, s) => Ok(Self::String(s.to_string())),
             Value::Union(_i, b) => Self::try_from(*b),
             Value::Array(items) => items
                 .into_iter()
@@ -341,7 +348,7 @@ impl TryFrom<Value> for JsonValue {
                 .map(|v| Self::Object(v.into_iter().collect())),
             Value::Record(items) => items
                 .into_iter()
-                .map(|(key, value)| Self::try_from(value).map(|v| (key, v)))
+                .map(|(key, value)| Self::try_from(value).map(|v| (key.to_string(), v)))
                 .collect::<Result<Vec<_>, _>>()
                 .map(|v| Self::Object(v.into_iter().collect())),
             Value::Date(d) => Ok(Self::Number(d.into())),
@@ -532,7 +539,7 @@ impl Value {
             // TODO: check precision against n
             (&Value::Fixed(_n, _), &Schema::Decimal { .. }) => None,
             (Value::String(s), Schema::Enum(EnumSchema { symbols, .. })) => {
-                if !symbols.contains(s) {
+                if !symbols.iter().any(|sym| sym.as_ref() == s.as_str()) {
                     Some(format!("'{s}' is not a member of the possible symbols"))
                 } else {
                     None
@@ -634,7 +641,7 @@ impl Value {
             }
             (Value::Map(items), Schema::Record(RecordSchema { fields, .. })) => {
                 fields.iter().fold(None, |acc, field| {
-                    if let Some(item) = items.get(&field.name) {
+                    if let Some(item) = items.get(field.name.as_ref()) {
                         let res = item.validate_internal(&field.schema, names, enclosing_namespace);
                         Value::accumulate(acc, res)
                     } else if !field.is_nullable() {
@@ -1043,29 +1050,31 @@ impl Value {
 
     pub(crate) fn resolve_enum(
         self,
-        symbols: &[String],
+        symbols: &[Arc<str>],
         enum_default: &Option<String>,
         _field_default: &Option<JsonValue>,
     ) -> Result<Self, Error> {
-        let validate_symbol = |symbol: String, symbols: &[String]| {
+        let validate_symbol = |symbol: Arc<str>, symbols: &[Arc<str>]| {
             if let Some(index) = symbols.iter().position(|item| item == &symbol) {
                 Ok(Value::Enum(index as u32, symbol))
             } else {
                 match enum_default {
                     Some(default) => {
-                        if let Some(index) = symbols.iter().position(|item| item == default) {
-                            Ok(Value::Enum(index as u32, default.clone()))
+                        if let Some(index) =
+                            symbols.iter().position(|item| item.as_ref() == default.as_str())
+                        {
+                            Ok(Value::Enum(index as u32, Arc::from(default.as_str())))
                         } else {
                             Err(Details::GetEnumDefault {
-                                symbol,
-                                symbols: symbols.into(),
+                                symbol: symbol.to_string(),
+                                symbols: symbols.iter().map(|s| s.to_string()).collect(),
                             }
                             .into())
                         }
                     }
                     _ => Err(Details::GetEnumDefault {
-                        symbol,
-                        symbols: symbols.into(),
+                        symbol: symbol.to_string(),
+                        symbols: symbols.iter().map(|s| s.to_string()).collect(),
                     }
                     .into()),
                 }
@@ -1074,7 +1083,7 @@ impl Value {
 
         match self {
             Value::Enum(_raw_index, s) => validate_symbol(s, symbols),
-            Value::String(s) => validate_symbol(s, symbols),
+            Value::String(s) => validate_symbol(Arc::from(s.as_str()), symbols),
             other => Err(Details::GetEnum(other).into()),
         }
     }
@@ -1159,11 +1168,11 @@ impl Value {
     ) -> Result<Self, Error> {
         let mut items = match self {
             Value::Map(items) => Ok(items),
-            Value::Record(fields) => Ok(fields.into_iter().collect::<HashMap<_, _>>()),
+            Value::Record(fields) => Ok(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<HashMap<_, _>>()),
             other => Err(Error::new(Details::GetRecord {
                 expected: fields
                     .iter()
-                    .map(|field| (field.name.clone(), field.schema.clone().into()))
+                    .map(|field| (field.name.to_string(), field.schema.clone().into()))
                     .collect(),
                 other,
             })),
@@ -1172,7 +1181,7 @@ impl Value {
         let new_fields = fields
             .iter()
             .map(|field| {
-                let value = match items.remove(&field.name) {
+                let value = match items.remove(field.name.as_ref()) {
                     Some(value) => value,
                     None => match field.default {
                         Some(ref value) => match field.schema {
@@ -1207,7 +1216,7 @@ impl Value {
                             _ => Value::try_from(value.clone())?,
                         },
                         None => {
-                            return Err(Details::GetField(field.name.clone()).into());
+                            return Err(Details::GetField(field.name.to_string()).into());
                         }
                     },
                 };
@@ -1399,7 +1408,7 @@ mod tests {
                 r#"Invalid value: Fixed(11, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) for schema: Duration(FixedSchema { name: Name { name: "TestName", .. }, size: 12, .. }). Reason: The value's size ('11') must be exactly 12 to be a Duration"#,
             ),
             (
-                Value::Record(vec![("unknown_field_name".to_string(), Value::Null)]),
+                Value::Record(vec![("unknown_field_name".into(), Value::Null)]),
                 Schema::Record(RecordSchema {
                     name: Name::new("record_name")?,
                     aliases: None,
@@ -1417,7 +1426,7 @@ mod tests {
                 r#"Invalid value: Record([("unknown_field_name", Null)]) for schema: Record(RecordSchema { name: Name { name: "record_name", .. }, fields: [RecordField { name: "field_name", schema: Int, .. }], .. }). Reason: There is no schema field for field 'unknown_field_name'"#,
             ),
             (
-                Value::Record(vec![("field_name".to_string(), Value::Null)]),
+                Value::Record(vec![("field_name".into(), Value::Null)]),
                 Schema::Record(RecordSchema {
                     name: Name::new("record_name")?,
                     aliases: None,
@@ -1430,7 +1439,7 @@ mod tests {
                             })
                             .build(),
                     ],
-                    lookup: [("field_name".to_string(), 0)].iter().cloned().collect(),
+                    lookup: [("field_name".to_string(), 0)].iter().map(|(k, v)| (Arc::<str>::from(k.as_str()), *v)).collect(),
                     attributes: Default::default(),
                 }),
                 false,
@@ -1497,19 +1506,19 @@ mod tests {
             aliases: None,
             doc: None,
             symbols: vec![
-                "spades".to_string(),
-                "hearts".to_string(),
-                "diamonds".to_string(),
-                "clubs".to_string(),
+                "spades".into(),
+                "hearts".into(),
+                "diamonds".into(),
+                "clubs".into(),
             ],
             default: None,
             attributes: Default::default(),
         });
 
-        assert!(Value::Enum(0, "spades".to_string()).validate(&schema));
+        assert!(Value::Enum(0, "spades".into()).validate(&schema));
         assert!(Value::String("spades".to_string()).validate(&schema));
 
-        let value = Value::Enum(1, "spades".to_string());
+        let value = Value::Enum(1, "spades".into());
         assert!(!value.validate(&schema));
         assert_logged(
             format!(
@@ -1519,7 +1528,7 @@ mod tests {
             .as_str(),
         );
 
-        let value = Value::Enum(1000, "spades".to_string());
+        let value = Value::Enum(1000, "spades".into());
         assert!(!value.validate(&schema));
         assert_logged(
             format!(
@@ -1544,16 +1553,16 @@ mod tests {
             aliases: None,
             doc: None,
             symbols: vec![
-                "hearts".to_string(),
-                "diamonds".to_string(),
-                "clubs".to_string(),
-                "spades".to_string(),
+                "hearts".into(),
+                "diamonds".into(),
+                "clubs".into(),
+                "spades".into(),
             ],
             default: None,
             attributes: Default::default(),
         });
 
-        let value = Value::Enum(0, "spades".to_string());
+        let value = Value::Enum(0, "spades".into());
         assert!(!value.validate(&other_schema));
         assert_logged(
             format!(
@@ -1608,28 +1617,28 @@ mod tests {
                 ("c".to_string(), 2),
             ]
             .iter()
-            .cloned()
+            .map(|(k, v)| (Arc::<str>::from(k.as_str()), *v))
             .collect(),
             attributes: Default::default(),
         });
 
         assert!(
             Value::Record(vec![
-                ("a".to_string(), Value::Long(42i64)),
-                ("b".to_string(), Value::String("foo".to_string())),
+                ("a".into(), Value::Long(42i64)),
+                ("b".into(), Value::String("foo".to_string())),
             ])
             .validate(&schema)
         );
 
         let value = Value::Record(vec![
-            ("b".to_string(), Value::String("foo".to_string())),
-            ("a".to_string(), Value::Long(42i64)),
+            ("b".into(), Value::String("foo".to_string())),
+            ("a".into(), Value::Long(42i64)),
         ]);
         assert!(value.validate(&schema));
 
         let value = Value::Record(vec![
-            ("a".to_string(), Value::Boolean(false)),
-            ("b".to_string(), Value::String("foo".to_string())),
+            ("a".into(), Value::Boolean(false)),
+            ("b".into(), Value::String("foo".to_string())),
         ]);
         assert!(!value.validate(&schema));
         assert_logged(
@@ -1637,8 +1646,8 @@ mod tests {
         );
 
         let value = Value::Record(vec![
-            ("a".to_string(), Value::Long(42i64)),
-            ("c".to_string(), Value::String("foo".to_string())),
+            ("a".into(), Value::Long(42i64)),
+            ("c".into(), Value::String("foo".to_string())),
         ]);
         assert!(!value.validate(&schema));
         assert_logged(
@@ -1649,8 +1658,8 @@ mod tests {
         );
 
         let value = Value::Record(vec![
-            ("a".to_string(), Value::Long(42i64)),
-            ("d".to_string(), Value::String("foo".to_string())),
+            ("a".into(), Value::Long(42i64)),
+            ("d".into(), Value::String("foo".to_string())),
         ]);
         assert!(!value.validate(&schema));
         assert_logged(
@@ -1658,10 +1667,10 @@ mod tests {
         );
 
         let value = Value::Record(vec![
-            ("a".to_string(), Value::Long(42i64)),
-            ("b".to_string(), Value::String("foo".to_string())),
-            ("c".to_string(), Value::Null),
-            ("d".to_string(), Value::Null),
+            ("a".into(), Value::Long(42i64)),
+            ("b".into(), Value::String("foo".to_string())),
+            ("c".into(), Value::Null),
+            ("d".into(), Value::Null),
         ]);
         assert!(!value.validate(&schema));
         assert_logged(
@@ -1699,8 +1708,8 @@ Field with name '"b"' is not a member of the map items"#,
             Value::Union(
                 1,
                 Box::new(Value::Record(vec![
-                    ("a".to_string(), Value::Long(42i64)),
-                    ("b".to_string(), Value::String("foo".to_string())),
+                    ("a".into(), Value::Long(42i64)),
+                    ("b".into(), Value::String("foo".to_string())),
                 ]))
             )
             .validate(&union_schema)
@@ -2015,14 +2024,14 @@ Field with name '"b"' is not a member of the map items"#,
         )?;
 
         let value = Value::Record(vec![(
-            "event".to_string(),
-            Value::Record(vec![("amount".to_string(), Value::Int(200))]),
+            "event".into(),
+            Value::Record(vec![("amount".into(), Value::Int(200))]),
         )]);
         assert!(value.resolve(&schema).is_ok());
 
         let value = Value::Record(vec![(
-            "event".to_string(),
-            Value::Record(vec![("size".to_string(), Value::Int(1))]),
+            "event".into(),
+            Value::Record(vec![("size".into(), Value::Int(1))]),
         )]);
         assert!(value.resolve(&schema).is_err());
 
@@ -2114,9 +2123,9 @@ Field with name '"b"' is not a member of the map items"#,
         );
         assert_eq!(
             JsonValue::try_from(Value::Record(vec![
-                ("v1".to_string(), Value::Int(1)),
-                ("v2".to_string(), Value::Int(2)),
-                ("v3".to_string(), Value::Int(3))
+                ("v1".into(), Value::Int(1)),
+                ("v2".into(), Value::Int(2)),
+                ("v3".into(), Value::Int(3))
             ]))?,
             JsonValue::Object(
                 vec![

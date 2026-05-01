@@ -23,6 +23,7 @@ use serde::{
     forward_to_deserialize_any,
 };
 use std::ops::Deref;
+use std::sync::Arc;
 use std::{
     collections::{
         HashMap,
@@ -45,7 +46,7 @@ struct MapDeserializer<'de> {
 }
 
 struct RecordDeserializer<'de> {
-    input: Iter<'de, (String, Value)>,
+    input: Iter<'de, (Arc<str>, Value)>,
     value: Option<&'de Value>,
 }
 
@@ -54,7 +55,7 @@ pub struct EnumUnitDeserializer<'a> {
 }
 
 pub struct EnumDeserializer<'de> {
-    input: &'de [(String, Value)],
+    input: &'de [(Arc<str>, Value)],
 }
 
 /// A `serde::de::EnumAccess` and `serde::de::VariantAccess` implementation for deserializing
@@ -97,7 +98,7 @@ impl<'de> MapDeserializer<'de> {
 }
 
 impl<'de> RecordDeserializer<'de> {
-    pub fn new(input: &'de [(String, Value)]) -> Self {
+    pub fn new(input: &'de [(Arc<str>, Value)]) -> Self {
         RecordDeserializer {
             input: input.iter(),
             value: None,
@@ -112,7 +113,7 @@ impl<'a> EnumUnitDeserializer<'a> {
 }
 
 impl<'de> EnumDeserializer<'de> {
-    pub fn new(input: &'de [(String, Value)]) -> Self {
+    pub fn new(input: &'de [(Arc<str>, Value)]) -> Self {
         EnumDeserializer { input }
     }
 }
@@ -184,9 +185,15 @@ impl<'de> de::EnumAccess<'de> for EnumDeserializer<'de> {
         self.input.first().map_or(
             Err(de::Error::custom("A record must have a least one field")),
             |item| match (item.0.as_ref(), &item.1) {
-                ("type", Value::String(x)) | ("type", Value::Enum(_, x)) => Ok((
+                ("type", Value::String(x)) => Ok((
                     seed.deserialize(StringDeserializer {
-                        input: x.to_owned(),
+                        input: x.to_string(),
+                    })?,
+                    self,
+                )),
+                ("type", Value::Enum(_, x)) => Ok((
+                    seed.deserialize(StringDeserializer {
+                        input: x.to_string(),
                     })?,
                     self,
                 )),
@@ -350,7 +357,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Map(items) => visitor.visit_map(MapDeserializer::new(items)),
             Value::Bytes(bytes) | Value::Fixed(_, bytes) => visitor.visit_bytes(bytes),
             Value::Decimal(d) => visitor.visit_bytes(&d.to_vec()?),
-            Value::Enum(_, s) => visitor.visit_borrowed_str(s),
+            Value::Enum(_, s) => visitor.visit_str(s),
             Value::BigDecimal(big_decimal) => {
                 visitor.visit_str(big_decimal.to_plain_string().as_str())
             }
@@ -570,7 +577,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.input {
-            Value::Enum(_, s) | Value::String(s) => visitor.visit_borrowed_str(s),
+            Value::Enum(_, s) => visitor.visit_str(s),
+            Value::String(s) => visitor.visit_borrowed_str(s),
             Value::Bytes(bytes) | Value::Fixed(_, bytes) => String::from_utf8(bytes.to_owned())
                 .map_err(|e| de::Error::custom(e.to_string()))
                 .and_then(|s| visitor.visit_string(s)),
@@ -893,7 +901,7 @@ impl<'de> de::MapAccess<'de> for RecordDeserializer<'de> {
             Some((field, value)) => {
                 self.value = Some(value);
                 seed.deserialize(StringDeserializer {
-                    input: field.clone(),
+                    input: field.to_string(),
                 })
                 .map(Some)
             }
@@ -1143,9 +1151,9 @@ mod tests {
     #[test]
     fn test_from_value() -> TestResult {
         let test = Value::Record(vec![
-            ("a".to_owned(), Value::Long(27)),
-            ("b".to_owned(), Value::String("foo".to_owned())),
-            ("c".to_owned(), Value::Decimal(Decimal::from(vec![1, 24]))),
+            (Arc::from("a"), Value::Long(27)),
+            (Arc::from("b"), Value::String("foo".to_owned())),
+            (Arc::from("c"), Value::Decimal(Decimal::from(vec![1, 24]))),
         ]);
         let expected = Test {
             a: 27,
@@ -1157,14 +1165,14 @@ mod tests {
 
         let test_inner = Value::Record(vec![
             (
-                "a".to_owned(),
+                Arc::from("a"),
                 Value::Record(vec![
-                    ("a".to_owned(), Value::Long(27)),
-                    ("b".to_owned(), Value::String("foo".to_owned())),
-                    ("c".to_owned(), Value::Decimal(Decimal::from(vec![1, 24]))),
+                    (Arc::from("a"), Value::Long(27)),
+                    (Arc::from("b"), Value::String("foo".to_owned())),
+                    (Arc::from("c"), Value::Decimal(Decimal::from(vec![1, 24]))),
                 ]),
             ),
-            ("b".to_owned(), Value::Int(35)),
+            (Arc::from("b"), Value::Int(35)),
         ]);
 
         let expected_inner = TestInner { a: expected, b: 35 };
@@ -1180,7 +1188,7 @@ mod tests {
             a: UnitExternalEnum::Val1,
         };
 
-        let test = Value::Record(vec![("a".to_owned(), Value::Enum(0, "Val1".to_owned()))]);
+        let test = Value::Record(vec![(Arc::from("a"), Value::Enum(0, Arc::from("Val1")))]);
         let final_value: TestUnitExternalEnum = from_value(&test)?;
         assert_eq!(
             final_value, expected,
@@ -1192,8 +1200,8 @@ mod tests {
         };
 
         let test = Value::Record(vec![(
-            "a".to_owned(),
-            Value::Record(vec![("t".to_owned(), Value::String("Val1".to_owned()))]),
+            Arc::from("a"),
+            Value::Record(vec![(Arc::from("t"), Value::String("Val1".to_owned()))]),
         )]);
         let final_value: TestUnitInternalEnum = from_value(&test)?;
         assert_eq!(
@@ -1205,8 +1213,8 @@ mod tests {
         };
 
         let test = Value::Record(vec![(
-            "a".to_owned(),
-            Value::Record(vec![("t".to_owned(), Value::String("Val1".to_owned()))]),
+            Arc::from("a"),
+            Value::Record(vec![(Arc::from("t"), Value::String("Val1".to_owned()))]),
         )]);
         let final_value: TestUnitAdjacentEnum = from_value(&test)?;
         assert_eq!(
@@ -1217,7 +1225,7 @@ mod tests {
             a: UnitUntaggedEnum::Val1,
         };
 
-        let test = Value::Record(vec![("a".to_owned(), Value::Null)]);
+        let test = Value::Record(vec![(Arc::from("a"), Value::Null)]);
         let final_value: TestUnitUntaggedEnum = from_value(&test)?;
         assert_eq!(
             final_value, expected,
@@ -1246,17 +1254,17 @@ mod tests {
                 TestNullExternalEnum {
                     a: NullExternalEnum::Val1,
                 },
-                Value::Record(vec![("a".to_owned(), Value::Enum(0, "Val1".to_owned()))]),
+                Value::Record(vec![(Arc::from("a"), Value::Enum(0, Arc::from("Val1")))]),
             ),
             (
                 TestNullExternalEnum {
                     a: NullExternalEnum::Val2(),
                 },
                 Value::Record(vec![(
-                    "a".to_owned(),
+                    Arc::from("a"),
                     Value::Record(vec![
-                        ("type".to_owned(), Value::Enum(1, "Val2".to_owned())),
-                        ("value".to_owned(), Value::Union(1, Box::new(Value::Null))),
+                        (Arc::from("type"), Value::Enum(1, Arc::from("Val2"))),
+                        (Arc::from("value"), Value::Union(1, Box::new(Value::Null))),
                     ]),
                 )]),
             ),
@@ -1265,10 +1273,10 @@ mod tests {
                     a: NullExternalEnum::Val2(),
                 },
                 Value::Record(vec![(
-                    "a".to_owned(),
+                    Arc::from("a"),
                     Value::Record(vec![
-                        ("type".to_owned(), Value::Enum(1, "Val2".to_owned())),
-                        ("value".to_owned(), Value::Array(vec![])),
+                        (Arc::from("type"), Value::Enum(1, Arc::from("Val2"))),
+                        (Arc::from("value"), Value::Array(vec![])),
                     ]),
                 )]),
             ),
@@ -1277,10 +1285,10 @@ mod tests {
                     a: NullExternalEnum::Val3(()),
                 },
                 Value::Record(vec![(
-                    "a".to_owned(),
+                    Arc::from("a"),
                     Value::Record(vec![
-                        ("type".to_owned(), Value::Enum(2, "Val3".to_owned())),
-                        ("value".to_owned(), Value::Union(2, Box::new(Value::Null))),
+                        (Arc::from("type"), Value::Enum(2, Arc::from("Val3"))),
+                        (Arc::from("value"), Value::Union(2, Box::new(Value::Null))),
                     ]),
                 )]),
             ),
@@ -1289,10 +1297,10 @@ mod tests {
                     a: NullExternalEnum::Val4(123),
                 },
                 Value::Record(vec![(
-                    "a".to_owned(),
+                    Arc::from("a"),
                     Value::Record(vec![
-                        ("type".to_owned(), Value::Enum(3, "Val4".to_owned())),
-                        ("value".to_owned(), Value::Union(3, Value::Long(123).into())),
+                        (Arc::from("type"), Value::Enum(3, Arc::from("Val4"))),
+                        (Arc::from("value"), Value::Union(3, Value::Long(123).into())),
                     ]),
                 )]),
             ),
@@ -1313,11 +1321,11 @@ mod tests {
         };
 
         let test = Value::Record(vec![(
-            "a".to_owned(),
+            Arc::from("a"),
             Value::Record(vec![
-                ("type".to_owned(), Value::String("Double".to_owned())),
+                (Arc::from("type"), Value::String("Double".to_owned())),
                 (
-                    "value".to_owned(),
+                    Arc::from("value"),
                     Value::Union(1, Box::new(Value::Double(64.0))),
                 ),
             ]),
@@ -1338,16 +1346,16 @@ mod tests {
         };
 
         let test = Value::Record(vec![(
-            "a".to_owned(),
+            Arc::from("a"),
             Value::Record(vec![
-                ("type".to_owned(), Value::String("Val1".to_owned())),
+                (Arc::from("type"), Value::String("Val1".to_owned())),
                 (
-                    "value".to_owned(),
+                    Arc::from("value"),
                     Value::Union(
                         0,
                         Box::new(Value::Record(vec![
-                            ("x".to_owned(), Value::Float(1.0)),
-                            ("y".to_owned(), Value::Float(2.0)),
+                            (Arc::from("x"), Value::Float(1.0)),
+                            (Arc::from("y"), Value::Float(2.0)),
                         ])),
                     ),
                 ),
@@ -1382,8 +1390,8 @@ mod tests {
         };
 
         let test = Value::Record(vec![
-            ("f1".to_owned(), "Hello".into()),
-            ("f2".to_owned(), "World".into()),
+            (Arc::from("f1"), "Hello".into()),
+            (Arc::from("f2"), "World".into()),
         ]);
         let final_value: S1 = from_value(&test)?;
         assert_eq!(final_value, expected);
@@ -1398,11 +1406,11 @@ mod tests {
         };
 
         let test = Value::Record(vec![(
-            "a".to_owned(),
+            Arc::from("a"),
             Value::Record(vec![
-                ("type".to_owned(), Value::String("Val1".to_owned())),
+                (Arc::from("type"), Value::String("Val1".to_owned())),
                 (
-                    "value".to_owned(),
+                    Arc::from("value"),
                     Value::Union(
                         0,
                         Box::new(Value::Array(vec![Value::Float(1.0), Value::Float(2.0)])),
@@ -1587,100 +1595,100 @@ mod tests {
 
         let record = Value::Record(vec![
             (
-                "a_string".to_string(),
+                Arc::from("a_string"),
                 Value::String("a valid message field".to_string()),
             ),
             (
-                "a_non_existing_string".to_string(),
+                Arc::from("a_non_existing_string"),
                 Value::String("a string".to_string()),
             ),
             (
-                "a_union_string".to_string(),
+                Arc::from("a_union_string"),
                 Value::Union(0, Box::new(Value::String("a union string".to_string()))),
             ),
             (
-                "a_union_long".to_string(),
+                Arc::from("a_union_long"),
                 Value::Union(0, Box::new(Value::Long(412))),
             ),
             (
-                "a_union_long".to_string(),
+                Arc::from("a_union_long"),
                 Value::Union(0, Box::new(Value::Long(412))),
             ),
             (
-                "a_time_micros".to_string(),
+                Arc::from("a_time_micros"),
                 Value::Union(0, Box::new(Value::TimeMicros(123))),
             ),
             (
-                "a_non_existing_time_micros".to_string(),
+                Arc::from("a_non_existing_time_micros"),
                 Value::Union(0, Box::new(Value::TimeMicros(-123))),
             ),
             (
-                "a_timestamp_millis".to_string(),
+                Arc::from("a_timestamp_millis"),
                 Value::Union(0, Box::new(Value::TimestampMillis(234))),
             ),
             (
-                "a_non_existing_timestamp_millis".to_string(),
+                Arc::from("a_non_existing_timestamp_millis"),
                 Value::Union(0, Box::new(Value::TimestampMillis(-234))),
             ),
             (
-                "a_timestamp_micros".to_string(),
+                Arc::from("a_timestamp_micros"),
                 Value::Union(0, Box::new(Value::TimestampMicros(345))),
             ),
             (
-                "a_non_existing_timestamp_micros".to_string(),
+                Arc::from("a_non_existing_timestamp_micros"),
                 Value::Union(0, Box::new(Value::TimestampMicros(-345))),
             ),
             (
-                "a_timestamp_nanos".to_string(),
+                Arc::from("a_timestamp_nanos"),
                 Value::Union(0, Box::new(Value::TimestampNanos(345))),
             ),
             (
-                "a_non_existing_timestamp_nanos".to_string(),
+                Arc::from("a_non_existing_timestamp_nanos"),
                 Value::Union(0, Box::new(Value::TimestampNanos(-345))),
             ),
             (
-                "a_local_timestamp_millis".to_string(),
+                Arc::from("a_local_timestamp_millis"),
                 Value::Union(0, Box::new(Value::LocalTimestampMillis(678))),
             ),
             (
-                "a_non_existing_local_timestamp_millis".to_string(),
+                Arc::from("a_non_existing_local_timestamp_millis"),
                 Value::Union(0, Box::new(Value::LocalTimestampMillis(-678))),
             ),
             (
-                "a_local_timestamp_micros".to_string(),
+                Arc::from("a_local_timestamp_micros"),
                 Value::Union(0, Box::new(Value::LocalTimestampMicros(789))),
             ),
             (
-                "a_non_existing_local_timestamp_micros".to_string(),
+                Arc::from("a_non_existing_local_timestamp_micros"),
                 Value::Union(0, Box::new(Value::LocalTimestampMicros(-789))),
             ),
             (
-                "a_local_timestamp_nanos".to_string(),
+                Arc::from("a_local_timestamp_nanos"),
                 Value::Union(0, Box::new(Value::LocalTimestampNanos(789))),
             ),
             (
-                "a_non_existing_local_timestamp_nanos".to_string(),
+                Arc::from("a_non_existing_local_timestamp_nanos"),
                 Value::Union(0, Box::new(Value::LocalTimestampNanos(-789))),
             ),
             (
-                "a_record".to_string(),
+                Arc::from("a_record"),
                 Value::Union(
                     0,
                     Box::new(Value::Record(vec![(
-                        "record_in_union".to_string(),
+                        Arc::from("record_in_union"),
                         Value::Int(-2),
                     )])),
                 ),
             ),
             (
-                "a_non_existing_record".to_string(),
+                Arc::from("a_non_existing_record"),
                 Value::Union(
                     0,
-                    Box::new(Value::Record(vec![("blah".to_string(), Value::Int(-22))])),
+                    Box::new(Value::Record(vec![(Arc::from("blah"), Value::Int(-22))])),
                 ),
             ),
             (
-                "an_array".to_string(),
+                Arc::from("an_array"),
                 Value::Union(
                     0,
                     Box::new(Value::Array(vec![
@@ -1690,7 +1698,7 @@ mod tests {
                 ),
             ),
             (
-                "a_non_existing_array".to_string(),
+                Arc::from("a_non_existing_array"),
                 Value::Union(
                     0,
                     Box::new(Value::Array(vec![
@@ -1700,17 +1708,17 @@ mod tests {
                 ),
             ),
             (
-                "a_union_map".to_string(),
+                Arc::from("a_union_map"),
                 Value::Union(0, Box::new(Value::Map(value_map))),
             ),
             (
-                "a_non_existing_union_map".to_string(),
+                Arc::from("a_non_existing_union_map"),
                 Value::Union(0, Box::new(Value::Map(HashMap::new()))),
             ),
-            ("an_enum".to_string(), Value::Enum(0, "Val1".to_owned())),
+            (Arc::from("an_enum"), Value::Enum(0, Arc::from("Val1"))),
             (
-                "a_non_existing_enum".to_string(),
-                Value::Enum(0, "AnotherVariant".to_owned()),
+                Arc::from("a_non_existing_enum"),
+                Value::Enum(0, Arc::from("AnotherVariant")),
             ),
         ]);
 

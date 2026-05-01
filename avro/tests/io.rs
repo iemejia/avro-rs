@@ -46,7 +46,7 @@ fn schemas_to_validate() -> &'static Vec<(&'static str, Value)> {
             ),
             (
                 r#"{"type": "enum", "name": "Test", "symbols": ["A", "B"]}"#,
-                Value::Enum(1, "B".to_string()),
+                Value::Enum(1, "B".into()),
             ),
             (
                 r#"{"type": "array", "items": "long"}"#,
@@ -71,7 +71,7 @@ fn schemas_to_validate() -> &'static Vec<(&'static str, Value)> {
             ),
             (
                 r#"{"type": "record", "name": "Test", "fields": [{"name": "f", "type": "long"}]}"#,
-                Value::Record(vec![("f".to_string(), Value::Long(1))]),
+                Value::Record(vec![("f".into(), Value::Long(1))]),
             ),
         ]
     })
@@ -137,7 +137,7 @@ fn default_value_examples() -> &'static Vec<(&'static str, &'static str, Value)>
             (
                 r#"{"type": "enum", "name": "F", "symbols": ["FOO", "BAR"]}"#,
                 r#""FOO""#,
-                Value::Enum(0, "FOO".to_string()),
+                Value::Enum(0, "FOO".into()),
             ),
             (
                 r#"{"type": "array", "items": "int"}"#,
@@ -165,7 +165,7 @@ fn default_value_examples() -> &'static Vec<(&'static str, &'static str, Value)>
             (
                 r#"{"type": "record", "name": "F", "fields": [{"name": "A", "type": "int"}]}"#,
                 r#"{"A": 5}"#,
-                Value::Record(vec![("A".to_string(), Value::Int(5))]),
+                Value::Record(vec![("A".into(), Value::Int(5))]),
             ),
             (
                 r#"["null", "int"]"#,
@@ -204,13 +204,13 @@ fn long_record_datum() -> &'static Value {
     static LONG_RECORD_DATUM_ONCE: OnceLock<Value> = OnceLock::new();
     LONG_RECORD_DATUM_ONCE.get_or_init(|| {
         Value::Record(vec![
-            ("A".to_string(), Value::Int(1)),
-            ("B".to_string(), Value::Int(2)),
-            ("C".to_string(), Value::Int(3)),
-            ("D".to_string(), Value::Int(4)),
-            ("E".to_string(), Value::Int(5)),
-            ("F".to_string(), Value::Int(6)),
-            ("G".to_string(), Value::Int(7)),
+            ("A".into(), Value::Int(1)),
+            ("B".into(), Value::Int(2)),
+            ("C".into(), Value::Int(3)),
+            ("D".into(), Value::Int(4)),
+            ("E".into(), Value::Int(5)),
+            ("F".into(), Value::Int(6)),
+            ("G".into(), Value::Int(7)),
         ])
     })
 }
@@ -304,7 +304,7 @@ fn test_unknown_symbol() -> TestResult {
         Schema::parse_str(r#"{"type": "enum", "name": "Test", "symbols": ["FOO", "BAR"]}"#)?;
     let reader_schema =
         Schema::parse_str(r#"{"type": "enum", "name": "Test", "symbols": ["BAR", "BAZ"]}"#)?;
-    let original_value = Value::Enum(0, "FOO".to_string());
+    let original_value = Value::Enum(0, "FOO".into());
     let encoded = GenericDatumWriter::builder(&writer_schema)
         .build()?
         .write_value_to_vec(original_value.clone())?;
@@ -329,7 +329,7 @@ fn test_default_value() -> TestResult {
                 ]
             }}"#
         ))?;
-        let datum_to_read = Value::Record(vec![("H".to_string(), default_datum.clone())]);
+        let datum_to_read = Value::Record(vec![("H".into(), default_datum.clone())]);
         let encoded = GenericDatumWriter::builder(long_record_schema())
             .build()?
             .write_value_to_vec(long_record_datum().clone())?;
@@ -415,8 +415,8 @@ fn test_projection() -> TestResult {
     "#,
     )?;
     let datum_to_read = Value::Record(vec![
-        ("E".to_string(), Value::Int(5)),
-        ("F".to_string(), Value::Int(6)),
+        ("E".into(), Value::Int(5)),
+        ("F".into(), Value::Int(6)),
     ]);
     let encoded = GenericDatumWriter::builder(long_record_schema())
         .build()?
@@ -445,8 +445,8 @@ fn test_field_order() -> TestResult {
     "#,
     )?;
     let datum_to_read = Value::Record(vec![
-        ("F".to_string(), Value::Int(6)),
-        ("E".to_string(), Value::Int(5)),
+        ("F".into(), Value::Int(6)),
+        ("E".into(), Value::Int(5)),
     ]);
     let encoded = GenericDatumWriter::builder(long_record_schema())
         .build()?
@@ -476,8 +476,8 @@ fn test_type_exception() -> Result<(), String> {
     )
     .unwrap();
     let datum_to_write = Value::Record(vec![
-        ("E".to_string(), Value::Int(5)),
-        ("F".to_string(), Value::String(String::from("Bad"))),
+        ("E".into(), Value::Int(5)),
+        ("F".into(), Value::String(String::from("Bad"))),
     ]);
     let encoded = GenericDatumWriter::builder(&writer_schema)
         .build()

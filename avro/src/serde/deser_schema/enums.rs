@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{borrow::Borrow, io::Read};
+use std::{borrow::Borrow, io::Read, sync::Arc};
 
 use serde::{
     Deserializer,
@@ -33,7 +33,7 @@ use crate::{
 /// Deserializer for plain enums.
 pub struct PlainEnumDeserializer<'s, 'r, R: Read> {
     reader: &'r mut R,
-    symbols: &'s [String],
+    symbols: &'s [Arc<str>],
 }
 
 impl<'s, 'r, R: Read> PlainEnumDeserializer<'s, 'r, R> {

@@ -220,7 +220,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
         Value::String(s) => match *schema {
             Schema::String | Schema::Uuid(UuidSchema::String) => encode_bytes(s, writer),
             Schema::Enum(EnumSchema { ref symbols, .. }) => {
-                if let Some(index) = symbols.iter().position(|item| item == s) {
+                if let Some(index) = symbols.iter().position(|item| &**item == s) {
                     encode_int(index as i32, writer)
                 } else {
                     error!("Invalid symbol string {:?}.", &s[..]);
@@ -353,7 +353,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                     let mut ordered_values: Vec<Option<&Value>> =
                         vec![None; schema_fields.len()];
                     for (vname, vval) in value_fields.iter() {
-                        if let Some(&idx) = lookup.get(vname.as_str()) {
+                        if let Some(&idx) = lookup.get(&**vname) {
                             ordered_values[idx] = Some(vval);
                         }
                         // If not found by primary name, check aliases
@@ -374,7 +374,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                             let alias_value = value_fields
                                 .iter()
                                 .find(|(vname, _)| {
-                                    schema_field.aliases.iter().any(|alias| vname == alias)
+                                    schema_field.aliases.iter().any(|alias| &**vname == alias)
                                 })
                                 .map(|(_, v)| v);
                             if let Some(value) = alias_value {
@@ -387,7 +387,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
                                 )?;
                             } else {
                                 return Err(Details::NoEntryInLookupTable(
-                                    schema_field.name.clone(),
+                                    schema_field.name.to_string(),
                                     format!(
                                         "{:?}",
                                         value_fields

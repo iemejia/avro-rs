@@ -403,16 +403,16 @@ impl Checker {
                     // Can't use RecordField.lookup as aliases are also inserted into there and we
                     // are not allowed to match on writer aliases.
                     // Search using field name and *after* that aliases.
-                    if let Some(w_field) = once(&r_field.name)
-                        .chain(r_field.aliases.iter())
-                        .find_map(|ra| w_fields.iter().find(|wf| &wf.name == ra))
+                    if let Some(w_field) = once(r_field.name.as_ref())
+                        .chain(r_field.aliases.iter().map(|s| s.as_str()))
+                        .find_map(|ra| w_fields.iter().find(|wf| wf.name.as_ref() == ra))
                     {
                         // Check that the schemas are compatible
                         match self.full_match_schemas(&w_field.schema, &r_field.schema) {
                             Ok(c) => compatibility &= c,
                             Err(err) => {
                                 return Err(CompatibilityError::FieldTypeMismatch(
-                                    r_field.name.clone(),
+                                    r_field.name.to_string(),
                                     Box::new(err),
                                 ));
                             }
@@ -420,7 +420,7 @@ impl Checker {
                     } else if r_field.default.is_none() {
                         // No default and no matching field in the writer
                         return Err(CompatibilityError::MissingDefaultValue(
-                            r_field.name.clone(),
+                            r_field.name.to_string(),
                         ));
                     }
                 }
@@ -1339,9 +1339,9 @@ mod tests {
         assert_eq!(
             reader.next().unwrap().unwrap(),
             Value::Record(vec![
-                ("a".to_string(), Value::Long(27)),
-                ("b".to_string(), Value::String("foo".to_string())),
-                ("c".to_string(), Value::Enum(1, "spades".to_string())),
+                ("a".into(), Value::Long(27)),
+                ("b".into(), Value::String("foo".to_string())),
+                ("c".into(), Value::Enum(1, "spades".into())),
             ])
         );
         assert!(reader.next().is_none());
@@ -1405,9 +1405,9 @@ mod tests {
         assert_eq!(
             reader.next().unwrap().unwrap(),
             Value::Record(vec![
-                ("a".to_string(), Value::Long(27)),
-                ("b".to_string(), Value::String("foo".to_string())),
-                ("c".to_string(), Value::Enum(0, "hearts".to_string())),
+                ("a".into(), Value::Long(27)),
+                ("b".into(), Value::String("foo".to_string())),
+                ("c".into(), Value::Enum(0, "hearts".into())),
             ])
         );
         assert!(reader.next().is_none());

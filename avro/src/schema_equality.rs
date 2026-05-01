@@ -569,7 +569,7 @@ mod tests {
         let schema_one = Schema::Enum(EnumSchema {
             name: Name::try_from("enum").expect("Name is valid"),
             doc: None,
-            symbols: vec!["A".to_string(), "B".to_string()],
+            symbols: vec!["A".into(), "B".into()],
             default: None,
             aliases: None,
             attributes: BTreeMap::new(),
@@ -580,7 +580,7 @@ mod tests {
         let schema_two = Schema::Enum(EnumSchema {
             name: Name::try_from("enum").expect("Name is valid"),
             doc: None,
-            symbols: vec!["A".to_string(), "B".to_string()],
+            symbols: vec!["A".into(), "B".into()],
             default: None,
             aliases: None,
             attributes: BTreeMap::new(),
@@ -631,7 +631,7 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("field".to_string())
+                    .name("field")
                     .schema(Schema::Boolean)
                     .build(),
             ],
@@ -647,7 +647,7 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("field".to_string())
+                    .name("field")
                     .schema(Schema::Boolean)
                     .build(),
             ],

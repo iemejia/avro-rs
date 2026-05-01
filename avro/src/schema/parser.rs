@@ -28,6 +28,7 @@ use crate::{AvroResult, Error};
 use log::{debug, error, warn};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Default)]
 pub(crate) struct Parser {
@@ -569,11 +570,11 @@ impl Parser {
 
         for (position, field) in fields.iter().enumerate() {
             if let Some(_old) = lookup.insert(field.name.clone(), position) {
-                return Err(Details::FieldNameDuplicate(field.name.clone()).into());
+                return Err(Details::FieldNameDuplicate(field.name.to_string()).into());
             }
 
             for alias in &field.aliases {
-                lookup.insert(alias.clone(), position);
+                lookup.insert(Arc::from(alias.as_str()), position);
             }
         }
 
@@ -624,23 +625,23 @@ impl Parser {
         let aliases =
             self.fix_aliases_namespace(complex.aliases(), fully_qualified_name.namespace());
 
-        let symbols: Vec<String> = symbols_opt
+        let symbols: Vec<Arc<str>> = symbols_opt
             .and_then(|v| v.as_array())
             .ok_or_else(|| Error::from(Details::GetEnumSymbolsField))
             .and_then(|symbols| {
                 symbols
                     .iter()
-                    .map(|symbol| symbol.as_str().map(|s| s.to_string()))
+                    .map(|symbol| symbol.as_str().map(|s| Arc::from(s)))
                     .collect::<Option<_>>()
                     .ok_or_else(|| Error::from(Details::GetEnumSymbols))
             })?;
 
-        let mut existing_symbols: HashSet<&String> = HashSet::with_capacity(symbols.len());
+        let mut existing_symbols: HashSet<&str> = HashSet::with_capacity(symbols.len());
         for symbol in symbols.iter() {
             validate_enum_symbol_name(symbol)?;
 
             // Ensure there are no duplicate symbols
-            if existing_symbols.contains(&symbol) {
+            if existing_symbols.contains(symbol.as_ref()) {
                 return Err(Details::EnumSymbolDuplicate(symbol.to_string()).into());
             }
 
@@ -663,7 +664,7 @@ impl Parser {
             if !resolved {
                 return Err(Details::GetEnumDefault {
                     symbol: value.to_string(),
-                    symbols,
+                    symbols: symbols.iter().map(|s| s.to_string()).collect(),
                 }
                 .into());
             }

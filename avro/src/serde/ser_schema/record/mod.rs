@@ -90,7 +90,7 @@ impl<'s, 'w, W: Write, S: Borrow<Schema>> RecordSerializer<'s, 'w, W, S> {
             details => format!("{details:?}"),
         };
         Error::new(Details::SerializeRecordFieldWithSchema {
-            field_name: field.name.clone(),
+            field_name: field.name.to_string(),
             record_schema: self.record.clone(),
             error,
         })
@@ -134,14 +134,14 @@ impl<'s, 'w, W: Write, S: Borrow<Schema>> RecordSerializer<'s, 'w, W, S> {
                     )?)
                     .map_err(|e| self.field_error(position, e))?;
                 if self.cache.insert(position, bytes).is_some() {
-                    Err(Details::FieldNameDuplicate(field.name.clone()).into())
+                    Err(Details::FieldNameDuplicate(field.name.to_string()).into())
                 } else {
                     Ok(())
                 }
             }
             Ordering::Greater => {
                 // This field is already written to the writer so we got a duplicate
-                Err(Details::FieldNameDuplicate(field.name.clone()).into())
+                Err(Details::FieldNameDuplicate(field.name.to_string()).into())
             }
         }
     }
@@ -156,7 +156,7 @@ impl<'s, 'w, W: Write, S: Borrow<Schema>> RecordSerializer<'s, 'w, W, S> {
             .map_err(|e| self.field_error(position, e))
         } else {
             Err(Details::MissingDefaultForSkippedField {
-                field_name: field.name.clone(),
+                field_name: field.name.to_string(),
                 schema: self.record.clone(),
             }
             .into())
@@ -210,7 +210,7 @@ impl<'s, 'w, W: Write, S: Borrow<Schema>> SerializeMap for RecordSerializer<'s, 
         T: ?Sized + Serialize,
     {
         let name = key.serialize(StringSerializer)?;
-        if let Some(position) = self.record.lookup.get(&name).copied() {
+        if let Some(position) = self.record.lookup.get(name.as_str()).copied() {
             self.map_position = Some(position);
             Ok(())
         } else {
@@ -239,7 +239,7 @@ impl<'s, 'w, W: Write, S: Borrow<Schema>> SerializeMap for RecordSerializer<'s, 
         V: ?Sized + Serialize,
     {
         let name = key.serialize(StringSerializer)?;
-        if let Some(position) = self.record.lookup.get(&name).copied() {
+        if let Some(position) = self.record.lookup.get(name.as_str()).copied() {
             self.serialize_next_field(position, value)
         } else {
             Err(Details::FieldName(name.to_string()).into())

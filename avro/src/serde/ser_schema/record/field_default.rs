@@ -90,9 +90,11 @@ impl<'v, 's> SchemaAwareRecordFieldDefault<'v, 's> {
                 | Schema::Uuid(UuidSchema::Fixed(fixed))
                 | Schema::Duration(fixed),
             ) => s.len() == fixed.size,
-            (Value::String(s), Schema::Enum(enum_schema)) => enum_schema.symbols.contains(s),
+            (Value::String(s), Schema::Enum(enum_schema)) => {
+                enum_schema.symbols.iter().any(|sym| &**sym == s.as_str())
+            }
             (Value::Object(o), Schema::Record(record)) => record.fields.iter().all(|field| {
-                if let Some(value) = o.get(&field.name) {
+                if let Some(value) = o.get(field.name.as_ref()) {
                     Self::recursive_type_check(value, &field.schema)
                 } else {
                     field.default.is_some()
@@ -165,7 +167,7 @@ impl<'v, 's> Serialize for SchemaAwareRecordFieldDefault<'v, 's> {
                     .symbols
                     .iter()
                     .enumerate()
-                    .find(|(_i, symbol)| *symbol == s)
+                    .find(|(_i, symbol)| symbol.as_ref() == s.as_str())
                 else {
                     return Err(S::Error::custom(format!(
                         "Could not find `{s}` in enum: {enum_schema:?}"
@@ -181,8 +183,8 @@ impl<'v, 's> Serialize for SchemaAwareRecordFieldDefault<'v, 's> {
             // This abuses the support for flattened fields, which are also serialized as a map.
             (Value::Object(o), Schema::Record(record)) => {
                 serializer.collect_map(record.fields.iter().filter_map(|field| {
-                    o.get(&field.name)
-                        .map(|value| (&field.name, Self::new(value, &field.schema)))
+                    o.get(field.name.as_ref())
+                        .map(|value| (field.name.as_ref(), Self::new(value, &field.schema)))
                 }))
             }
             (Value::Object(o), Schema::Map(map)) => {

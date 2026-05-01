@@ -814,6 +814,7 @@ pub mod array_opt {
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
+    use std::sync::Arc;
 
     use crate::{Schema, from_value, to_value, types::Value};
 
@@ -934,11 +935,11 @@ mod tests {
 
         let value = Value::Record(vec![
             (
-                "vec_field".to_owned(),
+                Arc::from("vec_field"),
                 Value::Bytes(expected.vec_field.clone()),
             ),
             (
-                "vec_field_opt".to_owned(),
+                Arc::from("vec_field_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Bytes(
@@ -947,15 +948,15 @@ mod tests {
                 ),
             ),
             (
-                "vec_field_opt2".to_owned(),
+                Arc::from("vec_field_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "fixed_field".to_owned(),
+                Arc::from("fixed_field"),
                 Value::Fixed(expected.fixed_field.len(), expected.fixed_field.to_vec()),
             ),
             (
-                "fixed_field_opt".to_owned(),
+                Arc::from("fixed_field_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Fixed(
@@ -965,15 +966,15 @@ mod tests {
                 ),
             ),
             (
-                "fixed_field_opt2".to_owned(),
+                Arc::from("fixed_field_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "slice_bytes_field".to_owned(),
+                Arc::from("slice_bytes_field"),
                 Value::Bytes(expected.slice_bytes_field.to_vec()),
             ),
             (
-                "slice_bytes_field_opt".to_owned(),
+                Arc::from("slice_bytes_field_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Bytes(
@@ -982,18 +983,18 @@ mod tests {
                 ),
             ),
             (
-                "slice_bytes_field_opt2".to_owned(),
+                Arc::from("slice_bytes_field_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "slice_fixed_field".to_owned(),
+                Arc::from("slice_fixed_field"),
                 Value::Fixed(
                     expected.slice_fixed_field.len(),
                     expected.slice_fixed_field.to_vec(),
                 ),
             ),
             (
-                "slice_fixed_field_opt".to_owned(),
+                Arc::from("slice_fixed_field_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Fixed(
@@ -1003,7 +1004,7 @@ mod tests {
                 ),
             ),
             (
-                "slice_fixed_field_opt2".to_owned(),
+                Arc::from("slice_fixed_field_opt2"),
                 Value::Union(1, Box::new(Value::Null)),
             ),
         ]);
@@ -1084,7 +1085,7 @@ mod tests {
         };
         let expected = Value::Record(vec![
             (
-                "array_field".to_owned(),
+                Arc::from("array_field"),
                 Value::Array(
                     test.array_field
                         .iter()
@@ -1093,7 +1094,7 @@ mod tests {
                 ),
             ),
             (
-                "vec_field".to_owned(),
+                Arc::from("vec_field"),
                 Value::Array(
                     test.vec_field
                         .iter()
@@ -1102,11 +1103,11 @@ mod tests {
                 ),
             ),
             (
-                "vec_field2".to_owned(),
+                Arc::from("vec_field2"),
                 Value::Fixed(test.vec_field2.len(), test.vec_field2.clone()),
             ),
             (
-                "vec_field2_opt".to_owned(),
+                Arc::from("vec_field2_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Fixed(
@@ -1116,30 +1117,30 @@ mod tests {
                 ),
             ),
             (
-                "vec_field2_opt2".to_owned(),
+                Arc::from("vec_field2_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "vec_field3".to_owned(),
+                Arc::from("vec_field3"),
                 Value::Bytes(test.vec_field3.clone()),
             ),
             (
-                "vec_field3_opt".to_owned(),
+                Arc::from("vec_field3_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Bytes(test.vec_field3_opt.as_ref().unwrap().clone())),
                 ),
             ),
             (
-                "vec_field3_opt2".to_owned(),
+                Arc::from("vec_field3_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "fixed_field".to_owned(),
+                Arc::from("fixed_field"),
                 Value::Fixed(test.fixed_field.len(), test.fixed_field.to_vec()),
             ),
             (
-                "fixed_field_opt".to_owned(),
+                Arc::from("fixed_field_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Fixed(
@@ -1149,15 +1150,15 @@ mod tests {
                 ),
             ),
             (
-                "fixed_field_opt2".to_owned(),
+                Arc::from("fixed_field_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "fixed_field2".to_owned(),
+                Arc::from("fixed_field2"),
                 Value::Fixed(test.fixed_field2.len(), test.fixed_field2.to_vec()),
             ),
             (
-                "fixed_field2_opt".to_owned(),
+                Arc::from("fixed_field2_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Fixed(
@@ -1167,15 +1168,15 @@ mod tests {
                 ),
             ),
             (
-                "fixed_field2_opt2".to_owned(),
+                Arc::from("fixed_field2_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "bytes_field".to_owned(),
+                Arc::from("bytes_field"),
                 Value::Bytes(test.bytes_field.to_vec()),
             ),
             (
-                "bytes_field_opt".to_owned(),
+                Arc::from("bytes_field_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Bytes(
@@ -1184,15 +1185,15 @@ mod tests {
                 ),
             ),
             (
-                "bytes_field_opt2".to_owned(),
+                Arc::from("bytes_field_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
             (
-                "bytes_field2".to_owned(),
+                Arc::from("bytes_field2"),
                 Value::Bytes(test.bytes_field2.to_vec()),
             ),
             (
-                "bytes_field2_opt".to_owned(),
+                Arc::from("bytes_field2_opt"),
                 Value::Union(
                     1,
                     Box::new(Value::Bytes(
@@ -1201,7 +1202,7 @@ mod tests {
                 ),
             ),
             (
-                "bytes_field2_opt2".to_owned(),
+                Arc::from("bytes_field2_opt2"),
                 Value::Union(0, Box::new(Value::Null)),
             ),
         ]);

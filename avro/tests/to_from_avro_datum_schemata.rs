@@ -41,8 +41,8 @@ fn test_avro_3683_multiple_schemata_to_from_avro_datum() -> TestResult {
     init();
 
     let record: Value = Value::Record(vec![(
-        String::from("field_b"),
-        Value::Record(vec![(String::from("field_a"), Value::Float(1.0))]),
+        "field_b".into(),
+        Value::Record(vec![("field_a".into(), Value::Float(1.0))]),
     )]);
 
     let schemata: Vec<Schema> = Schema::parse_list([SCHEMA_A_STR, SCHEMA_B_STR])?;
@@ -71,8 +71,8 @@ fn avro_rs_106_test_multiple_schemata_to_from_avro_datum_with_resolution() -> Te
     init();
 
     let record: Value = Value::Record(vec![(
-        String::from("field_b"),
-        Value::Record(vec![(String::from("field_a"), Value::Float(1.0))]),
+        "field_b".into(),
+        Value::Record(vec![("field_a".into(), Value::Float(1.0))]),
     )]);
 
     let schemata: Vec<Schema> = Schema::parse_list([SCHEMA_A_STR, SCHEMA_B_STR])?;
@@ -103,8 +103,8 @@ fn test_avro_3683_multiple_schemata_writer_reader() -> TestResult {
     init();
 
     let record: Value = Value::Record(vec![(
-        String::from("field_b"),
-        Value::Record(vec![(String::from("field_a"), Value::Float(1.0))]),
+        "field_b".into(),
+        Value::Record(vec![("field_a".into(), Value::Float(1.0))]),
     )]);
 
     let schemata: Vec<Schema> = Schema::parse_list([SCHEMA_A_STR, SCHEMA_B_STR])?;

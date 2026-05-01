@@ -186,7 +186,7 @@ mod tests {
                 let mut b = None;
                 let mut c = vec![];
                 for (field_name, v) in fields {
-                    match (field_name.as_str(), v) {
+                    match (&*field_name, v) {
                         ("a", Value::Long(i)) => a = Some(i),
                         ("b", Value::Double(d)) => b = Some(d),
                         ("c", Value::Array(v)) => {
@@ -360,9 +360,9 @@ mod tests {
         assert_eq!(
             read_result,
             Value::Record(vec![
-                ("a".to_string(), Value::Long(0)),
-                ("b".to_string(), Value::Double(0.0)),
-                ("c".to_string(), Value::Array(vec![]))
+                ("a".into(), Value::Long(0)),
+                ("b".into(), Value::Double(0.0)),
+                ("c".into(), Value::Array(vec![]))
             ])
         );
         Ok(())

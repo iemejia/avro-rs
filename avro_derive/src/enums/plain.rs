@@ -51,7 +51,7 @@ pub fn schema_def(
                 name,
                 aliases: #enum_aliases,
                 doc: #doc,
-                symbols: vec![#(#symbols.to_owned()),*],
+                symbols: vec![#(::std::sync::Arc::from(#symbols)),*],
                 default: #default,
                 attributes: ::std::collections::BTreeMap::new(),
             })

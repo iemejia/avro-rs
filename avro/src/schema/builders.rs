@@ -23,6 +23,7 @@ use crate::{AvroResult, Schema};
 use bon::bon;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[bon]
 impl Schema {
@@ -64,7 +65,7 @@ impl Schema {
         attributes: Option<BTreeMap<String, JsonValue>>,
     ) -> Self {
         let attributes = attributes.unwrap_or_default();
-        let symbols = symbols.into_iter().map(Into::into).collect();
+        let symbols: Vec<Arc<str>> = symbols.into_iter().map(|s| Arc::from(s.into())).collect();
         Schema::Enum(EnumSchema {
             name,
             symbols,
@@ -139,7 +140,8 @@ mod tests {
 
         if let Schema::Enum(enum_schema) = schema {
             assert_eq!(enum_schema.name, name);
-            assert_eq!(enum_schema.symbols, symbols);
+            let expected_symbols: Vec<Arc<str>> = symbols.iter().map(|s| Arc::<str>::from(*s)).collect();
+            assert_eq!(enum_schema.symbols, expected_symbols);
             assert_eq!(enum_schema.aliases, None);
             assert_eq!(enum_schema.doc, None);
             assert_eq!(enum_schema.default, None);
@@ -170,7 +172,8 @@ mod tests {
 
         if let Schema::Enum(enum_schema) = schema {
             assert_eq!(enum_schema.name, name);
-            assert_eq!(enum_schema.symbols, symbols);
+            let expected_symbols: Vec<Arc<str>> = symbols.iter().map(|s| Arc::<str>::from(*s)).collect();
+            assert_eq!(enum_schema.symbols, expected_symbols);
             assert_eq!(enum_schema.aliases, Some(aliases));
             assert_eq!(enum_schema.doc, Some(doc.into()));
             assert_eq!(enum_schema.default, Some(default.into()));

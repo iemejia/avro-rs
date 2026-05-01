@@ -53,6 +53,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     io::Read,
+    sync::Arc,
 };
 use strum::{Display, EnumDiscriminants};
 
@@ -289,8 +290,12 @@ pub struct EnumSchema {
     /// The documentation of the schema
     #[builder(default)]
     pub doc: Documentation,
-    /// The set of symbols of the schema
-    pub symbols: Vec<String>,
+    /// The set of symbols of the schema.
+    ///
+    /// Stored as `Arc<str>` to enable zero-cost cloning during decoding —
+    /// values share the symbol reference with the schema instead of
+    /// allocating a new String per decoded enum value.
+    pub symbols: Vec<Arc<str>>,
     /// An optional default symbol used for compatibility
     pub default: Option<String>,
     /// The custom attributes of the schema
@@ -933,7 +938,8 @@ impl Serialize for Schema {
                     map.serialize_entry("namespace", n)?;
                 }
                 map.serialize_entry("name", &name.name())?;
-                map.serialize_entry("symbols", symbols)?;
+                let symbols_strs: Vec<&str> = symbols.iter().map(|s| s.as_ref()).collect();
+                map.serialize_entry("symbols", &symbols_strs)?;
 
                 if let Some(aliases) = aliases {
                     map.serialize_entry("aliases", aliases)?;
@@ -1203,6 +1209,7 @@ fn field_ordering_position(field: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use crate::writer::datum::GenericDatumWriter;
     use crate::{error::Details, rabin::Rabin, reader::datum::GenericDatumReader};
     use apache_avro_test_helper::{
@@ -1325,7 +1332,7 @@ mod tests {
                 .try_name("C")?
                 .fields(vec![
                     RecordField::builder()
-                        .name("field_one".to_string())
+                        .name(Arc::from("field_one"))
                         .schema(Schema::Union(UnionSchema::new(vec![
                             Schema::Ref {
                                 name: Name::new("A")?,
@@ -1373,11 +1380,11 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("field_one".to_string())
+                    .name(Arc::from("field_one"))
                     .schema(Schema::Float)
                     .build(),
             ],
-            lookup: BTreeMap::from_iter(vec![("field_one".to_string(), 0)]),
+            lookup: BTreeMap::from_iter(vec![(Arc::from("field_one"), 0)]),
             attributes: Default::default(),
         });
 
@@ -1387,11 +1394,11 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("field_one".to_string())
+                    .name(Arc::from("field_one"))
                     .schema(Schema::Float)
                     .build(),
             ],
-            lookup: BTreeMap::from_iter(vec![("field_one".to_string(), 0)]),
+            lookup: BTreeMap::from_iter(vec![(Arc::from("field_one"), 0)]),
             attributes: Default::default(),
         });
 
@@ -1537,7 +1544,7 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("field_one".to_string())
+                    .name(Arc::from("field_one"))
                     .default(JsonValue::Null)
                     .schema(Schema::Union(UnionSchema::new(vec![
                         Schema::Null,
@@ -1547,7 +1554,7 @@ mod tests {
                     ])?))
                     .build(),
             ],
-            lookup: BTreeMap::from_iter(vec![("field_one".to_string(), 0)]),
+            lookup: BTreeMap::from_iter(vec![(Arc::from("field_one"), 0)]),
             attributes: Default::default(),
         });
 
@@ -1572,8 +1579,8 @@ mod tests {
         )?;
 
         let mut lookup = BTreeMap::new();
-        lookup.insert("a".to_owned(), 0);
-        lookup.insert("b".to_owned(), 1);
+        lookup.insert(Arc::from("a"), 0);
+        lookup.insert(Arc::from("b"), 1);
 
         let expected = Schema::Record(RecordSchema {
             name: Name::new("test")?,
@@ -1581,12 +1588,12 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("a".to_string())
+                    .name(Arc::from("a"))
                     .default(JsonValue::Number(42i64.into()))
                     .schema(Schema::Long)
                     .build(),
                 RecordField::builder()
-                    .name("b".to_string())
+                    .name(Arc::from("b"))
                     .schema(Schema::String)
                     .build(),
             ],
@@ -1622,11 +1629,11 @@ mod tests {
         )?;
 
         let mut lookup = BTreeMap::new();
-        lookup.insert("recordField".to_owned(), 0);
+        lookup.insert(Arc::from("recordField"), 0);
 
         let mut node_lookup = BTreeMap::new();
-        node_lookup.insert("children".to_owned(), 1);
-        node_lookup.insert("label".to_owned(), 0);
+        node_lookup.insert(Arc::from("children"), 1);
+        node_lookup.insert(Arc::from("label"), 0);
 
         let expected = Schema::Record(RecordSchema {
             name: Name::new("test")?,
@@ -1634,18 +1641,18 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("recordField".to_string())
+                    .name(Arc::from("recordField"))
                     .schema(Schema::Record(RecordSchema {
                         name: Name::new("Node")?,
                         aliases: None,
                         doc: None,
                         fields: vec![
                             RecordField::builder()
-                                .name("label".to_string())
+                                .name(Arc::from("label"))
                                 .schema(Schema::String)
                                 .build(),
                             RecordField::builder()
-                                .name("children".to_string())
+                                .name(Arc::from("children"))
                                 .schema(
                                     Schema::array(Schema::Ref {
                                         name: Name::new("Node")?,
@@ -1792,8 +1799,8 @@ mod tests {
         )?;
 
         let mut lookup = BTreeMap::new();
-        lookup.insert("value".to_owned(), 0);
-        lookup.insert("next".to_owned(), 1);
+        lookup.insert(Arc::from("value"), 0);
+        lookup.insert(Arc::from("next"), 1);
 
         let expected = Schema::Record(RecordSchema {
             name: Name::new("LongList")?,
@@ -1801,11 +1808,11 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("value".to_string())
+                    .name(Arc::from("value"))
                     .schema(Schema::Long)
                     .build(),
                 RecordField::builder()
-                    .name("next".to_string())
+                    .name(Arc::from("next"))
                     .schema(Schema::Union(UnionSchema::new(vec![
                         Schema::Null,
                         Schema::Ref {
@@ -1842,8 +1849,8 @@ mod tests {
         )?;
 
         let mut lookup = BTreeMap::new();
-        lookup.insert("value".to_owned(), 0);
-        lookup.insert("next".to_owned(), 1);
+        lookup.insert(Arc::from("value"), 0);
+        lookup.insert(Arc::from("next"), 1);
 
         let expected = Schema::Record(RecordSchema {
             name: Name::new("record")?,
@@ -1851,11 +1858,11 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("value".to_string())
+                    .name(Arc::from("value"))
                     .schema(Schema::Long)
                     .build(),
                 RecordField::builder()
-                    .name("next".to_string())
+                    .name(Arc::from("next"))
                     .schema(Schema::Ref {
                         name: Name::new("record")?,
                     })
@@ -1896,8 +1903,8 @@ mod tests {
         )?;
 
         let mut lookup = BTreeMap::new();
-        lookup.insert("enum".to_owned(), 0);
-        lookup.insert("next".to_owned(), 1);
+        lookup.insert(Arc::from("enum"), 0);
+        lookup.insert(Arc::from("next"), 1);
 
         let expected = Schema::Record(RecordSchema {
             name: Name::new("record")?,
@@ -1905,20 +1912,20 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("enum".to_string())
+                    .name(Arc::from("enum"))
                     .schema(Schema::Enum(
                         EnumSchema::builder()
                             .name(Name::new("enum")?)
                             .symbols(vec![
-                                "one".to_string(),
-                                "two".to_string(),
-                                "three".to_string(),
+                                "one".into(),
+                                "two".into(),
+                                "three".into(),
                             ])
                             .build(),
                     ))
                     .build(),
                 RecordField::builder()
-                    .name("next".to_string())
+                    .name(Arc::from("next"))
                     .schema(Schema::Ref {
                         name: Name::new("enum")?,
                     })
@@ -1959,8 +1966,8 @@ mod tests {
         )?;
 
         let mut lookup = BTreeMap::new();
-        lookup.insert("fixed".to_owned(), 0);
-        lookup.insert("next".to_owned(), 1);
+        lookup.insert(Arc::from("fixed"), 0);
+        lookup.insert(Arc::from("next"), 1);
 
         let expected = Schema::Record(RecordSchema {
             name: Name::new("record")?,
@@ -1968,7 +1975,7 @@ mod tests {
             doc: None,
             fields: vec![
                 RecordField::builder()
-                    .name("fixed".to_string())
+                    .name(Arc::from("fixed"))
                     .schema(Schema::Fixed(FixedSchema {
                         name: Name::new("fixed")?,
                         aliases: None,
@@ -1978,7 +1985,7 @@ mod tests {
                     }))
                     .build(),
                 RecordField::builder()
-                    .name("next".to_string())
+                    .name(Arc::from("next"))
                     .schema(Schema::Ref {
                         name: Name::new("fixed")?,
                     })
@@ -2007,10 +2014,10 @@ mod tests {
             aliases: None,
             doc: None,
             symbols: vec![
-                "diamonds".to_owned(),
-                "spades".to_owned(),
-                "clubs".to_owned(),
-                "hearts".to_owned(),
+                "diamonds".into(),
+                "spades".into(),
+                "clubs".into(),
+                "hearts".into(),
             ],
             default: None,
             attributes: Default::default(),
@@ -2518,7 +2525,7 @@ mod tests {
             assert_eq!(name, Name::new("AccountEvent")?);
 
             let field = &fields[0];
-            assert_eq!(&field.name, "NullableLongArray");
+            assert_eq!(&*field.name, "NullableLongArray");
 
             if let Schema::Union(ref union) = field.schema {
                 assert_eq!(union.schemas[0], Schema::Null);
@@ -2684,7 +2691,7 @@ mod tests {
                 assert_eq!(name, Name::new("Rec")?);
                 assert_eq!(fields.len(), 1);
                 let field = &fields[0];
-                assert_eq!(&field.name, "field_one");
+                assert_eq!(&*field.name, "field_one");
                 assert_eq!(field.custom_attributes, expected_custom_attributes());
             }
             _ => panic!("Expected Schema::Record"),
@@ -2714,7 +2721,7 @@ mod tests {
                 assert_eq!(name, Name::new("union_schema_test")?);
                 assert_eq!(fields.len(), 1);
                 let field = &fields[0];
-                assert_eq!(&field.name, "a");
+                assert_eq!(&*field.name, "a");
                 assert_eq!(&field.default, &Some(JsonValue::Null));
                 match &field.schema {
                     Schema::Union(union) => {
@@ -2753,7 +2760,7 @@ mod tests {
                 assert_eq!(name, Name::new("union_schema_test")?);
                 assert_eq!(fields.len(), 1);
                 let field = &fields[0];
-                assert_eq!(&field.name, "a");
+                assert_eq!(&*field.name, "a");
                 assert_eq!(&field.default, &Some(json!(123)));
                 match &field.schema {
                     Schema::Union(union) => {
@@ -2791,7 +2798,7 @@ mod tests {
                 assert_eq!(name, Name::new("union_schema_test")?);
                 assert_eq!(fields.len(), 1);
                 let field = &fields[0];
-                assert_eq!(&field.name, "a");
+                assert_eq!(&*field.name, "a");
                 assert_eq!(&field.default, &Some(json!(123)));
                 match &field.schema {
                     Schema::Union(union) => {
@@ -2830,7 +2837,7 @@ mod tests {
                 assert_eq!(name, Name::new("union_schema_test")?);
                 assert_eq!(fields.len(), 1);
                 let field = &fields[0];
-                assert_eq!(&field.name, "a");
+                assert_eq!(&*field.name, "a");
                 assert_eq!(&field.default, &Some(json!(123)));
                 match &field.schema {
                     Schema::Union(union) => {
@@ -2866,7 +2873,7 @@ mod tests {
         let schema = Schema::parse_str(schema)?;
         if let Schema::Record(RecordSchema { fields, .. }) = schema {
             let num_field = &fields[0];
-            assert_eq!(num_field.name, "num");
+            assert_eq!(&*num_field.name, "num");
             assert_eq!(
                 num_field.aliases,
                 vec!["num1".to_string(), "num2".to_string()]
@@ -3040,10 +3047,10 @@ mod tests {
         match deser_value {
             types::Value::Record(fields) => {
                 assert_eq!(fields.len(), 2);
-                assert_eq!(fields[0].0, "barInit");
-                assert_eq!(fields[0].1, types::Value::Enum(0, "bar0".to_string()));
-                assert_eq!(fields[1].0, "barUse");
-                assert_eq!(fields[1].1, types::Value::Enum(1, "bar1".to_string()));
+                assert_eq!(&*fields[0].0, "barInit");
+                assert_eq!(fields[0].1, types::Value::Enum(0, "bar0".into()));
+                assert_eq!(&*fields[1].0, "barUse");
+                assert_eq!(fields[1].1, types::Value::Enum(1, "bar1".into()));
             }
             _ => panic!("Expected Value::Record"),
         }
@@ -4507,14 +4514,14 @@ mod tests {
     fn avro_3920_serialize_record_with_custom_attributes() -> TestResult {
         let expected = {
             let mut lookup = BTreeMap::new();
-            lookup.insert("value".to_owned(), 0);
+            lookup.insert(Arc::from("value"), 0);
             Schema::Record(RecordSchema {
                 name: Name::new("LongList")?,
                 aliases: Some(vec![Alias::new("LinkedLongs").unwrap()]),
                 doc: None,
                 fields: vec![
                     RecordField::builder()
-                        .name("value".to_string())
+                        .name(Arc::from("value"))
                         .schema(Schema::Long)
                         .custom_attributes(BTreeMap::from([("field-id".to_string(), 1.into())]))
                         .build(),
@@ -4648,7 +4655,7 @@ mod tests {
             Schema::Record(record_schema) => {
                 assert_eq!(record_schema.fields.len(), 1);
                 let field = record_schema.fields.first().unwrap();
-                assert_eq!(field.name, "birthday");
+                assert_eq!(&*field.name, "birthday");
                 assert_eq!(field.schema, Schema::Date);
                 assert_eq!(
                     types::Value::try_from(field.default.clone().unwrap())?,
