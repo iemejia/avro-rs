@@ -93,8 +93,12 @@ pub(crate) fn zig_i64<W: Write>(n: i64, writer: W) -> AvroResult<usize> {
 
 /// Decode a zigzagged varint from the reader.
 pub(crate) fn zag_i32<R: Read>(reader: &mut R) -> AvroResult<i32> {
-    let i = zag_i64(reader)?;
-    i32::try_from(i).map_err(|e| Details::ZagI32(e, i).into())
+    let z = decode_variable_u32(reader)?;
+    Ok(if z & 0x1 == 0 {
+        (z >> 1) as i32
+    } else {
+        !(z >> 1) as i32
+    })
 }
 
 /// Decode a zigzagged varint from the reader.
@@ -105,6 +109,34 @@ pub(crate) fn zag_i64<R: Read>(reader: &mut R) -> AvroResult<i64> {
     } else {
         !(z >> 1) as i64
     })
+}
+
+/// Read a varint from the reader as u32 (5 bytes max).
+///
+/// This is a dedicated 32-bit path that avoids the overhead of reading into
+/// a u64 and then narrowing. Most int/enum values fit in 1-2 varint bytes.
+#[inline]
+fn decode_variable_u32<R: Read>(reader: &mut R) -> AvroResult<u32> {
+    let mut i = 0u32;
+    let mut buf = [0u8; 1];
+    let mut j = 0u32;
+
+    loop {
+        if j > 4 {
+            // 5 * 7 = 35 > 32 bits
+            return Err(Details::IntegerOverflow.into());
+        }
+        reader
+            .read_exact(&mut buf[..])
+            .map_err(Details::ReadVariableIntegerBytes)?;
+        i |= (u32::from(buf[0] & 0x7F)) << (j * 7);
+        if (buf[0] >> 7) == 0 {
+            break;
+        }
+        j += 1;
+    }
+
+    Ok(i)
 }
 
 /// Write the number as a varint to the writer (32-bit variant).
@@ -179,7 +211,7 @@ fn decode_variable<R: Read>(reader: &mut R) -> AvroResult<u64> {
         }
     }
 
-    Ok(u64::from_le(i))
+    Ok(i)
 }
 
 /// Set the maximum number of bytes that can be allocated when decoding data.
