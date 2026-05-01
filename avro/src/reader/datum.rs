@@ -65,6 +65,9 @@ impl<'s> GenericDatumReader<'s> {
     ) -> AvroResult<Self> {
         let resolved_writer_schemata = if let Some(resolved) = resolved_writer_schemata {
             resolved
+        } else if !crate::encode::schema_has_refs(writer_schema) {
+            // Fast path: schemas without refs don't need name resolution.
+            ResolvedSchema::empty(writer_schema)
         } else {
             ResolvedSchema::try_from(writer_schema)?
         };
@@ -72,6 +75,8 @@ impl<'s> GenericDatumReader<'s> {
         let reader = if let Some(reader) = reader_schema {
             if let Some(resolved) = resolved_reader_schemata {
                 Some((reader, resolved))
+            } else if !crate::encode::schema_has_refs(reader) {
+                Some((reader, ResolvedSchema::empty(reader)))
             } else {
                 Some((reader, ResolvedSchema::try_from(reader)?))
             }

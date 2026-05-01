@@ -96,6 +96,9 @@ impl<'s> GenericDatumWriter<'s> {
     ) -> AvroResult<Self> {
         let resolved = if let Some(resolved) = resolved_schemata {
             resolved
+        } else if !crate::encode::schema_has_refs(schema) {
+            // Fast path: schemas without refs don't need name resolution.
+            ResolvedSchema::empty(schema)
         } else {
             ResolvedSchema::try_from(schema)?
         };

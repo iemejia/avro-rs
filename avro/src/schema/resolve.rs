@@ -38,6 +38,17 @@ impl<'s> ResolvedSchema<'s> {
         &self.names_ref
     }
 
+    /// Create an empty `ResolvedSchema` for schemas that have no references.
+    ///
+    /// This avoids the cost of walking the schema tree when it's known that
+    /// no `Schema::Ref` nodes exist.
+    pub(crate) fn empty(schema: &'s Schema) -> Self {
+        ResolvedSchema {
+            names_ref: HashMap::new(),
+            schemata: vec![schema],
+        }
+    }
+
     /// Resolve all references in this schema.
     ///
     /// If some references are to other schemas, see [`ResolvedSchema::new_with_schemata`].

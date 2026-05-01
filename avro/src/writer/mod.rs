@@ -86,6 +86,8 @@ impl<'a, W: Write> Writer<'a, W> {
     ) -> AvroResult<Self> {
         let resolved_schema = if let Some(schemata) = schemata {
             ResolvedSchema::try_from(schemata)?
+        } else if !crate::encode::schema_has_refs(schema) {
+            ResolvedSchema::empty(schema)
         } else {
             ResolvedSchema::try_from(schema)?
         };
