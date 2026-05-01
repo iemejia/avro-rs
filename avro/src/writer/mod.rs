@@ -247,11 +247,23 @@ impl<'a, W: Write> Writer<'a, W> {
         self.unvalidated_append_value_ref(&value)
     }
 
-    /// Append a compatible value to a `Writer`.
+    /// Append a compatible value to a `Writer` **without validation**.
     ///
-    /// This function does **not** validate that the provided value matches the schema. If it does
-    /// not match, the file will contain corrupt data. Use [`Writer::append_value_ref`] to have the
-    /// value validated during write or use [`Value::validate`] to validate the value.
+    /// This skips the per-value schema validation pass, offering significantly
+    /// better throughput (often 2x+) compared to [`Writer::append_value_ref`].
+    ///
+    /// # Safety contract
+    ///
+    /// The caller must ensure that `value` is structurally compatible with the
+    /// writer's schema. This is safe when values are constructed programmatically
+    /// with known-correct types and field names, or when they originate from a
+    /// system that already enforces schema compliance.
+    ///
+    /// If the value does not match the schema, the output will contain **silently
+    /// corrupt data** that cannot be decoded by any Avro reader.
+    ///
+    /// Use [`Writer::append_value_ref`] to have the value validated, or call
+    /// [`Value::validate`] upfront to validate a batch before writing.
     ///
     /// Returns the number of bytes written (it might be 0, see below).
     ///

@@ -58,8 +58,26 @@ impl<'s> GenericDatumWriter<'s> {
         ///
         /// Defaults to `true`.
         ///
-        /// Setting this to `false` and writing values that don't match the schema will make the
-        /// written data unreadable.
+        /// # When to disable validation
+        ///
+        /// Setting this to `false` skips the per-value validation pass, which can
+        /// significantly improve encoding throughput (often 2x or more for small records).
+        /// This is safe when you can guarantee that values are correctly constructed
+        /// — for example:
+        ///
+        /// - Values are built programmatically with known-correct types and field names
+        /// - Values originate from a system that already enforces the schema (e.g., a
+        ///   database query engine or a deserializer for the same schema)
+        /// - You have validated a batch of values upfront using [`Value::validate`]
+        ///
+        /// # Risk
+        ///
+        /// Writing values that don't match the schema with validation disabled will
+        /// produce **silently corrupt data** that cannot be decoded correctly by any
+        /// Avro reader. There will be no error at write time — the corruption will
+        /// only be discovered when attempting to read the data back.
+        ///
+        /// [`Value::validate`]: crate::types::Value::validate
         #[builder(default = true)]
         validate: bool,
         /// At what block size to start a new block (for arrays and maps).
