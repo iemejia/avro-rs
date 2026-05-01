@@ -259,14 +259,16 @@ pub(crate) fn decode_internal<R: Read, S: Borrow<Schema>>(
 
                 items.reserve(len);
                 for _ in 0..len {
-                    match decode_internal(&Schema::String, names, enclosing_namespace, reader)? {
-                        Value::String(key) => {
-                            let value =
-                                decode_internal(&inner.types, names, enclosing_namespace, reader)?;
-                            items.insert(key, value);
-                        }
-                        value => return Err(Details::MapKeyType(value.into()).into()),
-                    }
+                    // Read map key string directly instead of going through
+                    // decode_internal(&Schema::String, ...) + pattern match.
+                    let key_len = decode_len(reader)?;
+                    let mut key_buf = vec![0u8; key_len];
+                    reader.read_exact(&mut key_buf).map_err(Details::ReadBytes)?;
+                    let key = String::from_utf8(key_buf)
+                        .map_err(|e| Details::ConvertToUtf8Error(e.utf8_error()))?;
+                    let value =
+                        decode_internal(&inner.types, names, enclosing_namespace, reader)?;
+                    items.insert(key, value);
                 }
             }
 
@@ -295,39 +297,29 @@ pub(crate) fn decode_internal<R: Read, S: Borrow<Schema>>(
         },
         Schema::Record(RecordSchema { name, fields, .. }) => {
             let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
-            // Benchmarks indicate ~10% improvement using this method.
+            let ns = fully_qualified_name.namespace();
             let mut items = Vec::with_capacity(fields.len());
             for field in fields {
-                // TODO: This clone is also expensive. See if we can do away with it...
-                items.push((
-                    field.name.clone(),
-                    decode_internal(
-                        &field.schema,
-                        names,
-                        fully_qualified_name.namespace(),
-                        reader,
-                    )?,
-                ));
+                let val = decode_internal(&field.schema, names, ns, reader)?;
+                items.push((field.name.clone(), val));
             }
             Ok(Value::Record(items))
         }
         Schema::Enum(EnumSchema { symbols, .. }) => {
-            Ok(if let Value::Int(raw_index) = decode_int(reader)? {
-                let index = usize::try_from(raw_index)
-                    .map_err(|e| Details::ConvertI32ToUsize(e, raw_index))?;
-                if (0..symbols.len()).contains(&index) {
-                    let symbol = symbols[index].clone();
-                    Value::Enum(raw_index as u32, symbol)
-                } else {
-                    return Err(Details::GetEnumValue {
-                        index,
-                        nsymbols: symbols.len(),
-                    }
-                    .into());
-                }
+            // Read the index directly without wrapping in an intermediate Value::Int.
+            let raw_index = zag_i32(reader)?;
+            let index = usize::try_from(raw_index)
+                .map_err(|e| Details::ConvertI32ToUsize(e, raw_index))?;
+            if index < symbols.len() {
+                let symbol = symbols[index].clone();
+                Ok(Value::Enum(raw_index as u32, symbol))
             } else {
-                return Err(Details::GetEnumUnknownIndexValue.into());
-            })
+                Err(Details::GetEnumValue {
+                    index,
+                    nsymbols: symbols.len(),
+                }
+                .into())
+            }
         }
         Schema::Ref { name } => {
             let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
