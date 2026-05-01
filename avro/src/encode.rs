@@ -82,6 +82,54 @@ pub(crate) fn encode_int<W: Write>(i: i32, writer: W) -> AvroResult<usize> {
     zig_i32(i, writer)
 }
 
+/// Inline encoding for record fields. Handles the most common primitive types
+/// directly to avoid the overhead of calling the large `encode_internal`
+/// function (which includes a Schema::Ref check and a 30+ arm match).
+/// Falls back to `encode_internal` for complex types.
+#[inline(always)]
+fn encode_field_inline<W: Write, S: Borrow<Schema>>(
+    value: &Value,
+    schema: &Schema,
+    names: &HashMap<Name, S>,
+    enclosing_namespace: NamespaceRef,
+    writer: &mut W,
+) -> AvroResult<usize> {
+    match (value, schema) {
+        (Value::Null, Schema::Null) => Ok(0),
+        (Value::Boolean(b), Schema::Boolean) => writer
+            .write(&[u8::from(*b)])
+            .map_err(|e| Details::WriteBytes(e).into()),
+        (Value::Int(i), Schema::Int)
+        | (Value::Date(i), Schema::Date)
+        | (Value::TimeMillis(i), Schema::TimeMillis) => encode_int(*i, writer),
+        (Value::Long(i), Schema::Long)
+        | (Value::TimeMicros(i), Schema::TimeMicros)
+        | (Value::TimestampMillis(i), Schema::TimestampMillis)
+        | (Value::TimestampMicros(i), Schema::TimestampMicros)
+        | (Value::TimestampNanos(i), Schema::TimestampNanos)
+        | (Value::LocalTimestampMillis(i), Schema::LocalTimestampMillis)
+        | (Value::LocalTimestampMicros(i), Schema::LocalTimestampMicros)
+        | (Value::LocalTimestampNanos(i), Schema::LocalTimestampNanos) => {
+            encode_long(*i, writer)
+        }
+        (Value::Float(x), Schema::Float) => writer
+            .write(&x.to_le_bytes())
+            .map_err(|e| Details::WriteBytes(e).into()),
+        (Value::Double(x), Schema::Double) => writer
+            .write(&x.to_le_bytes())
+            .map_err(|e| Details::WriteBytes(e).into()),
+        (Value::String(s), Schema::String) => encode_bytes(s, writer),
+        (Value::Bytes(bytes), Schema::Bytes) => encode_bytes(bytes, writer),
+        (Value::Fixed(_, bytes), Schema::Fixed(_)) => writer
+            .write(bytes.as_slice())
+            .map_err(|e| Details::WriteBytes(e).into()),
+        (Value::Enum(i, _), Schema::Enum(_)) => encode_int(*i as i32, writer),
+        // Fall back to the full encode path for complex types (unions, records,
+        // arrays, maps, refs, logical types with special encoding, etc.)
+        _ => encode_internal(value, schema, names, enclosing_namespace, writer),
+    }
+}
+
 pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
     value: &Value,
     schema: &Schema,
@@ -329,11 +377,14 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
 
                 let mut written_bytes = 0;
                 if fields_aligned {
-                    // Direct positional encoding — no allocation, no lookups
+                    // Direct positional encoding — no allocation, no lookups.
+                    // Inline common primitive types to avoid the overhead of
+                    // calling encode_internal (function call + Schema::Ref check
+                    // + large match) for every field.
                     for ((_name, value), schema_field) in
                         value_fields.iter().zip(schema_fields.iter())
                     {
-                        written_bytes += encode_internal(
+                        written_bytes += encode_field_inline(
                             value,
                             &schema_field.schema,
                             names,
@@ -362,7 +413,7 @@ pub(crate) fn encode_internal<W: Write, S: Borrow<Schema>>(
 
                     for (idx, schema_field) in schema_fields.iter().enumerate() {
                         if let Some(value) = ordered_values[idx] {
-                            written_bytes += encode_internal(
+                            written_bytes += encode_field_inline(
                                 value,
                                 &schema_field.schema,
                                 names,

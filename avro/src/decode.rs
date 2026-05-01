@@ -79,6 +79,90 @@ pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> AvroResult<Value> {
     decode_internal(schema, rs.get_names(), None, reader)
 }
 
+/// Inline decoding for record fields. Handles the most common primitive types
+/// directly to avoid the overhead of calling the large `decode_internal`
+/// function (which has a 30+ arm match) for every field.
+/// Falls back to `decode_internal` for complex types.
+#[inline(always)]
+fn decode_field_inline<R: Read, S: Borrow<Schema>>(
+    schema: &Schema,
+    names: &HashMap<Name, S>,
+    enclosing_namespace: NamespaceRef,
+    reader: &mut R,
+) -> AvroResult<Value> {
+    match schema {
+        Schema::Null => Ok(Value::Null),
+        Schema::Boolean => {
+            let mut buf = [0u8; 1];
+            reader.read_exact(&mut buf).map_err(Details::ReadBoolean)?;
+            match buf[0] {
+                0u8 => Ok(Value::Boolean(false)),
+                1u8 => Ok(Value::Boolean(true)),
+                _ => Err(Details::BoolValue(buf[0]).into()),
+            }
+        }
+        Schema::Int => decode_int(reader),
+        Schema::Date => zag_i32(reader).map(Value::Date),
+        Schema::TimeMillis => zag_i32(reader).map(Value::TimeMillis),
+        Schema::Long => decode_long(reader),
+        Schema::TimeMicros => zag_i64(reader).map(Value::TimeMicros),
+        Schema::TimestampMillis => zag_i64(reader).map(Value::TimestampMillis),
+        Schema::TimestampMicros => zag_i64(reader).map(Value::TimestampMicros),
+        Schema::TimestampNanos => zag_i64(reader).map(Value::TimestampNanos),
+        Schema::LocalTimestampMillis => zag_i64(reader).map(Value::LocalTimestampMillis),
+        Schema::LocalTimestampMicros => zag_i64(reader).map(Value::LocalTimestampMicros),
+        Schema::LocalTimestampNanos => zag_i64(reader).map(Value::LocalTimestampNanos),
+        Schema::Float => {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf).map_err(Details::ReadFloat)?;
+            Ok(Value::Float(f32::from_le_bytes(buf)))
+        }
+        Schema::Double => {
+            let mut buf = [0u8; 8];
+            reader.read_exact(&mut buf).map_err(Details::ReadDouble)?;
+            Ok(Value::Double(f64::from_le_bytes(buf)))
+        }
+        Schema::String => {
+            let len = decode_len(reader)?;
+            let mut buf = vec![0u8; len];
+            reader.read_exact(&mut buf).map_err(Details::ReadString)?;
+            String::from_utf8(buf)
+                .map(Value::String)
+                .map_err(|e| Details::ConvertToUtf8(e).into())
+        }
+        Schema::Bytes => {
+            let len = decode_len(reader)?;
+            let mut buf = vec![0u8; len];
+            reader.read_exact(&mut buf).map_err(Details::ReadBytes)?;
+            Ok(Value::Bytes(buf))
+        }
+        Schema::Fixed(FixedSchema { size, .. }) => {
+            let mut buf = vec![0u8; *size];
+            reader
+                .read_exact(&mut buf)
+                .map_err(|e| Details::ReadFixed(e, *size))?;
+            Ok(Value::Fixed(*size, buf))
+        }
+        Schema::Enum(EnumSchema { symbols, .. }) => {
+            let raw_index = zag_i32(reader)?;
+            let index = usize::try_from(raw_index)
+                .map_err(|e| Details::ConvertI32ToUsize(e, raw_index))?;
+            if index < symbols.len() {
+                let symbol = symbols[index].clone();
+                Ok(Value::Enum(raw_index as u32, symbol))
+            } else {
+                Err(Details::GetEnumValue {
+                    index,
+                    nsymbols: symbols.len(),
+                }
+                .into())
+            }
+        }
+        // Fall back to the full decode path for complex types
+        _ => decode_internal(schema, names, enclosing_namespace, reader),
+    }
+}
+
 pub(crate) fn decode_internal<R: Read, S: Borrow<Schema>>(
     schema: &Schema,
     names: &HashMap<Name, S>,
@@ -300,7 +384,9 @@ pub(crate) fn decode_internal<R: Read, S: Borrow<Schema>>(
             let ns = fully_qualified_name.namespace();
             let mut items = Vec::with_capacity(fields.len());
             for field in fields {
-                let val = decode_internal(&field.schema, names, ns, reader)?;
+                // Inline common primitive types to avoid function call overhead
+                // (decode_internal is large and not inlined by the compiler).
+                let val = decode_field_inline(&field.schema, names, ns, reader)?;
                 items.push((field.name.clone(), val));
             }
             Ok(Value::Record(items))
